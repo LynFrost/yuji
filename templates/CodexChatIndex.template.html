@@ -1,0 +1,4690 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>语迹 - AI 对话记录浏览器</title>
+  <style>
+    :root {
+      --bg: #f3ede3;
+      --paper: #fffaf2;
+      --panel: #f7efe2;
+      --line: #d9c8ac;
+      --ink: #241b13;
+      --muted: #7a6d5c;
+      --accent: #8f4d1f;
+      --accent-soft: #e9d5bf;
+      --user: #fbf1e3;
+      --assistant: #f1f6ea;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(143,77,31,.16), transparent 28rem),
+        linear-gradient(135deg, #f7f0e4, var(--bg));
+    }
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      flex: none;
+      padding: 10px clamp(14px, 4vw, 28px);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,250,242,.78);
+      backdrop-filter: blur(12px);
+      z-index: 5;
+    }
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .header-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(20px, 2.4vw, 30px);
+      line-height: 1.1;
+      flex: none;
+    }
+    .app-subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      vertical-align: middle;
+      margin-left: 8px;
+      padding: 4px 8px;
+      border: 1px solid rgba(143,77,31,.28);
+      border-radius: 999px;
+      background: rgba(233,213,191,.62);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .stat {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.52);
+      font-size: 12px;
+    }
+    .source-selector {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255,255,255,.58);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .source-selector select {
+      max-width: min(42vw, 260px);
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      font: inherit;
+      font-weight: 800;
+      outline: none;
+      cursor: pointer;
+    }
+    .refresh-btn {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(143,77,31,.55);
+      border-radius: 12px;
+      padding: 10px 16px;
+      background: linear-gradient(180deg, rgba(233,213,191,.95), rgba(223,193,164,.95));
+      color: #6f3813;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 10px 20px rgba(60,44,27,.08);
+    }
+    .refresh-btn:disabled {
+      cursor: wait;
+      opacity: .78;
+    }
+    .refresh-btn::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, rgba(143,77,31,.88), transparent);
+      opacity: 0;
+      transform: translateX(-120%);
+    }
+    .refresh-btn.is-loading::after {
+      opacity: 1;
+      animation: refresh-progress 1.05s linear infinite;
+    }
+    @keyframes refresh-progress {
+      from { transform: translateX(-120%); }
+      to { transform: translateX(120%); }
+    }
+    .refresh-btn:hover {
+      border-color: var(--accent);
+      background: linear-gradient(180deg, rgba(239,220,199,.98), rgba(226,198,170,.98));
+    }
+    .shell {
+      position: relative;
+      display: grid;
+      grid-template-columns: 240px 320px minmax(0, 1fr);
+      flex: 1;
+      min-height: 0;
+    }
+    .shell.is-workspace-collapsed {
+      grid-template-columns: 320px minmax(0, 1fr);
+    }
+    .shell.is-session-collapsed {
+      grid-template-columns: 240px minmax(0, 1fr);
+    }
+    .shell.is-workspace-collapsed.is-session-collapsed {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .pane {
+      position: relative;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(247,239,226,.74);
+    }
+    .pane.is-collapsed {
+      display: none;
+    }
+    #workspacePane {
+      z-index: 30;
+    }
+    #sessionPane {
+      z-index: 20;
+    }
+    .shell > .viewer {
+      z-index: 10;
+    }
+    .pane + .pane {
+      border-left: 1px solid var(--line);
+    }
+    .pane-header {
+      position: relative;
+      z-index: 20;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid rgba(217,200,172,.72);
+      background: rgba(255,250,242,.7);
+    }
+    .pane-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      flex-wrap: nowrap;
+    }
+    .pane-title-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex: none;
+      min-width: 0;
+      white-space: nowrap;
+    }
+    .pane-title {
+      margin: 0;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .sort-menu {
+      position: static;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+    .pane-collapse-btn,
+    .collapsed-controls button {
+      border: 1px solid rgba(143,77,31,.24);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,.62);
+      color: var(--accent);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .pane-collapse-btn {
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+    .pane-collapse-btn:hover,
+    .collapsed-controls button:hover {
+      border-color: rgba(143,77,31,.52);
+      background: var(--accent-soft);
+    }
+    .collapsed-controls {
+      position: absolute;
+      z-index: 45;
+      left: 10px;
+      top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      pointer-events: none;
+    }
+    .collapsed-controls[hidden] {
+      display: none;
+    }
+    .collapsed-controls button {
+      pointer-events: auto;
+      box-shadow: 0 10px 22px rgba(60,44,27,.12);
+    }
+    .collapsed-controls button[hidden] {
+      display: none;
+    }
+    .sort-menu > summary {
+      list-style: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,.56);
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 13px;
+      user-select: none;
+    }
+    .sort-menu > summary::-webkit-details-marker {
+      display: none;
+    }
+    .sort-menu[open] > summary {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .sort-panel {
+      position: absolute;
+      right: 12px;
+      top: calc(100% + 8px);
+      z-index: 1000;
+      width: 300px;
+      width: min(300px, calc(100% - 24px));
+      max-height: min(72vh, 760px);
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+      box-shadow: 0 22px 54px rgba(60,44,27,.24);
+      overflow: auto;
+    }
+    .sort-panel > label {
+      display: block;
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .sort-panel select {
+      width: 100%;
+      margin-top: 6px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+    }
+    .filter-group {
+      margin-bottom: 12px;
+    }
+    .filter-title {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .checklist {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: none;
+      overflow: visible;
+    }
+    .sort-panel .check-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      min-height: 38px;
+      padding: 7px 9px;
+      border-radius: 10px;
+      background: rgba(255,255,255,.34);
+      font-size: 13px;
+      line-height: 1.35;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .sort-panel .check-item:hover {
+      background: rgba(255,255,255,.68);
+    }
+    .sort-panel .check-item input {
+      width: auto;
+      margin: 0;
+      margin-top: 2px;
+      accent-color: var(--accent);
+      transform: scale(1.05);
+      flex: none;
+    }
+    .sort-panel .check-item span {
+      display: block;
+      min-height: 20px;
+      word-break: break-word;
+    }
+    .pane input[type="search"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: var(--paper);
+      font: inherit;
+    }
+    .list {
+      position: relative;
+      overflow: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+    .workspace-btn,
+    .session-btn {
+      position: relative;
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,.5);
+      padding: 10px;
+      cursor: pointer;
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .session-btn {
+      padding-right: 22px;
+    }
+    .workspace-btn:hover,
+    .session-btn:hover {
+      border-color: var(--accent);
+      background: rgba(255,255,255,.78);
+    }
+    .workspace-btn.active,
+    .session-btn.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px rgba(143,77,31,.08);
+    }
+    .workspace-name {
+      display: block;
+      font-weight: 700;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .workspace-meta,
+    .session-meta {
+      display: block;
+      margin-top: 5px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .session-title {
+      display: block;
+      font-weight: 700;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .title-group-head {
+      position: relative;
+      width: 100%;
+      text-align: left;
+      border: 1px solid rgba(217,200,172,.82);
+      border-radius: 14px;
+      background: rgba(255,250,242,.72);
+      color: var(--ink);
+      padding: 9px 22px 9px 10px;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.35;
+      cursor: pointer;
+    }
+    .title-group-head:hover {
+      border-color: var(--accent);
+      background: rgba(255,255,255,.82);
+    }
+    .title-group-head.active {
+      border-color: var(--accent);
+      background: rgba(233,213,191,.48);
+      box-shadow: inset 0 0 0 1px rgba(143,77,31,.08);
+    }
+    .title-group-title {
+      display: block;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .title-group-meta {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .title-group-sessions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-left: 10px;
+      border-left: 1px solid rgba(217,200,172,.72);
+    }
+    .title-group-head.has-note::after,
+    .session-btn.has-note::after {
+      content: "";
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #b7791f;
+      box-shadow: 0 0 0 2px rgba(255,250,242,.9);
+      pointer-events: none;
+    }
+    .title-group-head.active.has-note::after,
+    .session-btn.active.has-note::after {
+      box-shadow: 0 0 0 2px rgba(255,255,255,.9);
+    }
+    .note-menu {
+      position: fixed;
+      z-index: 3000;
+      min-width: 132px;
+      padding: 6px;
+      border: 1px solid rgba(143,77,31,.24);
+      border-radius: 12px;
+      background: var(--paper);
+      box-shadow: 0 18px 44px rgba(60,44,27,.22);
+    }
+    .note-menu button {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: 9px;
+      padding: 9px 10px;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .note-menu button:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .note-menu[hidden],
+    .note-modal[hidden],
+    .image-preview-modal[hidden],
+    .note-tooltip[hidden] {
+      display: none !important;
+    }
+    .note-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 2800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 22px;
+      background: rgba(36,27,19,.28);
+    }
+    .note-modal-card {
+      width: min(680px, calc(100vw - 44px));
+      max-height: min(84vh, 760px);
+      padding: 18px;
+      border: 1px solid rgba(143,77,31,.24);
+      border-radius: 20px;
+      background: var(--paper);
+      box-shadow: 0 28px 80px rgba(60,44,27,.28);
+      overflow: auto;
+    }
+    .note-modal-card h2 {
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: 18px;
+    }
+    .note-context {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .note-modal textarea {
+      width: 100%;
+      min-height: 180px;
+      max-height: 52vh;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: #fffdf7;
+      color: var(--ink);
+      font: inherit;
+      line-height: 1.65;
+      resize: vertical;
+    }
+    .note-modal textarea:focus {
+      outline: none;
+      border-color: rgba(143,77,31,.55);
+      box-shadow: 0 0 0 3px rgba(143,77,31,.10);
+    }
+    .note-error {
+      min-height: 18px;
+      margin: 8px 0 0;
+      color: #8b2d24;
+      font-size: 12px;
+    }
+    .note-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .note-modal-actions button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 14px;
+      background: var(--paper);
+      color: var(--accent);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .note-modal-actions button[data-note-save] {
+      border-color: rgba(143,77,31,.55);
+      background: linear-gradient(180deg, rgba(233,213,191,.98), rgba(223,193,164,.98));
+      color: #6f3813;
+    }
+    .note-tooltip {
+      position: fixed;
+      z-index: 3200;
+      min-width: 260px;
+      max-width: min(70vw, 760px);
+      max-height: min(70vh, 620px);
+      padding: 12px 14px;
+      border: 1px solid rgba(143,77,31,.38);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fff8d8, #fff3bd);
+      color: #332412;
+      box-shadow: 0 20px 54px rgba(60,44,27,.26);
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      pointer-events: none;
+    }
+    .note-tooltip-label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+    .note-tooltip-body {
+      font-size: 14px;
+      line-height: 1.65;
+    }
+    .viewer {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: rgba(255,250,242,.55);
+    }
+    .viewer-head {
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,250,242,.85);
+    }
+    .viewer-head-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .reader-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 12px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .reply-composer {
+      position: relative;
+      padding: 14px 22px 18px;
+      border-top: 1px solid rgba(217,200,172,.72);
+      background: rgba(255,250,242,.84);
+    }
+    .reply-composer textarea {
+      width: 100%;
+      min-height: 64px;
+      max-height: 30em;
+      resize: none;
+      border: 1px solid rgba(143,77,31,.20);
+      border-radius: 16px;
+      padding: 12px 16px 58px 14px;
+      background: rgba(255,255,255,.86);
+      color: var(--ink);
+      font: inherit;
+      line-height: 1.65;
+      overflow-y: auto;
+      overflow-x: hidden;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.65);
+      scrollbar-width: thin;
+    }
+    .reply-composer textarea:focus {
+      outline: none;
+      border-color: rgba(143,77,31,.55);
+      box-shadow: 0 0 0 3px rgba(143,77,31,.10);
+    }
+    .reply-composer-actions {
+      position: absolute;
+      right: 34px;
+      bottom: 30px;
+      display: inline-flex;
+      align-items: center;
+      max-width: calc(100% - 68px);
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    .reply-action {
+      border: 1px solid rgba(143,77,31,.22);
+      border-radius: 10px;
+      padding: 7px 10px;
+      background: rgba(255,255,255,.92);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(60,44,27,.08);
+    }
+    .reply-action:hover {
+      border-color: rgba(143,77,31,.45);
+      background: #fff;
+    }
+    .reply-action--clear {
+      color: var(--muted);
+    }
+    .quick-refresh-btn {
+      border-color: rgba(143,77,31,.62) !important;
+      background: linear-gradient(180deg, rgba(233,213,191,.98), rgba(223,193,164,.98)) !important;
+      color: #6f3813 !important;
+      font-weight: 800;
+      box-shadow: 0 10px 20px rgba(60,44,27,.10);
+    }
+    .reply-action--send {
+      border-color: rgba(143,77,31,.62);
+      background: linear-gradient(180deg, rgba(233,213,191,.98), rgba(223,193,164,.98));
+      color: #6f3813;
+      font-weight: 800;
+    }
+    .reader-toolbar input[type="search"] {
+      flex: 1 1 220px;
+      min-width: 180px;
+    }
+    .toolbar-segment {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      flex: none;
+    }
+    .toolbar-segment--view {
+      background: rgba(255,255,255,.48);
+    }
+    .toolbar-segment--search {
+      border-color: rgba(143,77,31,.24);
+      background: rgba(233,213,191,.34);
+    }
+    .toolbar-segment--tools {
+      flex: 0 1 auto;
+      flex-wrap: wrap;
+      border-color: rgba(96,124,74,.24);
+      background: rgba(241,246,234,.58);
+    }
+    .viewer-meta,
+    .viewer-path {
+      margin: 6px 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+    }
+    .viewer-head-row .viewer-meta {
+      flex: 1 1 260px;
+      margin: 0;
+    }
+    .viewer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .viewer-actions a,
+    .reader-toolbar a,
+    .viewer-actions button,
+    .reader-toolbar button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper);
+      color: var(--accent);
+      padding: 7px 10px;
+      font-size: 12px;
+      line-height: 1.2;
+      font-family: inherit;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .reader-toolbar button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px rgba(143,77,31,.08);
+    }
+    .transcript {
+      position: relative;
+      overflow: auto;
+      padding: 20px 22px calc(38px + var(--transcript-scroll-spacer, 0px));
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 16px;
+      box-shadow: 0 10px 28px rgba(60,44,27,.06);
+      display: flex;
+      flex-direction: column;
+      width: fit-content;
+      max-width: min(860px, 92%);
+      content-visibility: auto;
+      contain-intrinsic-size: 0 160px;
+    }
+    .transcript.is-programmatic-scroll .message,
+    .transcript.is-programmatic-scroll .collapsed-group {
+      content-visibility: visible;
+    }
+    .message.user {
+      align-self: flex-end;
+      max-width: 80%;
+      background: var(--assistant);
+    }
+    .message-question {
+      scroll-margin-top: 16px;
+      cursor: pointer;
+    }
+    .message-question.is-current-question {
+      border-color: rgba(143,77,31,.58);
+      box-shadow: 0 12px 30px rgba(143,77,31,.12);
+    }
+    .message.assistant {
+      align-self: flex-start;
+      width: 100%;
+      max-width: 100%;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+    }
+    .message--final { background: rgba(241,246,234,.92); }
+    .message--commentary {
+      width: 100%;
+      max-width: 100%;
+      background: rgba(255,250,242,.88);
+      border-style: dashed;
+    }
+    .message--tool {
+      width: 100%;
+      max-width: 100%;
+      background: rgba(255,255,255,.72);
+      font-family: "Cascadia Code","Consolas",monospace;
+      contain-intrinsic-size: 0 220px;
+    }
+    .message-blocks { display: flex; flex-direction: column; gap: 12px; }
+    .code-block {
+      background: #122033;
+      color: #ecf3ff;
+      border-radius: 14px;
+      overflow: auto;
+      padding: 12px 14px;
+    }
+    .collapsed-group {
+      align-self: stretch;
+      max-width: min(980px, 96%);
+      content-visibility: auto;
+      contain-intrinsic-size: 0 96px;
+    }
+    .collapsed-group summary { cursor: pointer; color: var(--accent); }
+    .message-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .message-head-main {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .role {
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .context-label {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border: 1px solid rgba(143,77,31,.22);
+      border-radius: 999px;
+      color: var(--accent);
+      background: rgba(233,213,191,.38);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .message-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.7;
+      font-size: 15px;
+    }
+    .search-hit {
+      background: rgba(255, 214, 102, .55);
+      border-radius: 3px;
+      padding: 0 1px;
+    }
+    .code-block .search-hit {
+      background: rgba(255, 214, 102, .32);
+      outline: 1px solid rgba(255, 236, 158, .42);
+    }
+    .message-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .message-image-button {
+      border: 1px solid rgba(143,77,31,.22);
+      border-radius: 10px;
+      padding: 4px;
+      background: rgba(255,255,255,.68);
+      cursor: zoom-in;
+    }
+    .message-image-thumb {
+      display: block;
+      max-width: min(220px, 56vw);
+      max-height: 180px;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    .image-preview-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 3600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 54px 18px 22px;
+      background: rgba(24,18,12,.72);
+      cursor: zoom-out;
+    }
+    .image-preview-modal img {
+      display: block;
+      max-width: min(96vw, 1440px);
+      max-height: calc(100vh - 92px);
+      border-radius: 8px;
+      background: rgba(255,255,255,.08);
+      box-shadow: 0 24px 76px rgba(0,0,0,.34);
+      object-fit: contain;
+      cursor: default;
+    }
+    .image-preview-close {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      border: 1px solid rgba(255,255,255,.42);
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,.92);
+      color: var(--accent);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 12px 30px rgba(0,0,0,.22);
+    }
+    .image-preview-close:focus-visible {
+      outline: 3px solid rgba(255,214,102,.88);
+      outline-offset: 2px;
+    }
+    .message-list {
+      margin: 0;
+      padding-left: 1.4em;
+      line-height: 1.7;
+      font-size: 15px;
+    }
+    .message-table-wrap {
+      max-width: 100%;
+      overflow: auto;
+      border: 1px solid rgba(217,200,172,.72);
+      border-radius: 12px;
+      background: rgba(255,255,255,.44);
+    }
+    .message-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: max-content;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .message-table th,
+    .message-table td {
+      border-bottom: 1px solid rgba(217,200,172,.72);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    .message-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    .message-table th {
+      background: rgba(233,213,191,.35);
+      font-weight: 700;
+    }
+    .message-table .align-center { text-align: center; }
+    .message-table .align-right { text-align: right; }
+    .message-copy {
+      align-self: center;
+      flex: none;
+      margin-left: auto;
+      border: 1px solid rgba(143,77,31,.22);
+      border-radius: 999px;
+      background: rgba(255,255,255,.5);
+      color: var(--accent);
+      padding: 5px 10px;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.2;
+      cursor: pointer;
+    }
+    .message-copy:hover {
+      border-color: var(--accent);
+      background: rgba(255,255,255,.82);
+    }
+    .message-blocks > * {
+      margin: 0;
+    }
+    .empty-state {
+      padding: 28px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .viewer-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .viewer-tags {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .scroll-top {
+      position: sticky;
+      bottom: 12px;
+      align-self: flex-end;
+      margin: auto 12px 4px auto;
+      width: 42px;
+      height: 42px;
+      min-height: 42px;
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border-radius: 999px;
+      border: 1px solid rgba(143, 77, 31, .28);
+      background: rgba(255,250,242,.72);
+      color: var(--accent);
+      box-shadow: 0 10px 24px rgba(60,44,27,.12);
+      opacity: .72;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .scroll-top:hover {
+      opacity: 1;
+      border-color: var(--accent);
+    }
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 100;
+      max-width: min(320px, calc(100vw - 48px));
+      padding: 10px 14px;
+      border: 1px solid rgba(143,77,31,.22);
+      border-radius: 999px;
+      background: rgba(36,27,19,.88);
+      color: #fffaf2;
+      box-shadow: 0 14px 34px rgba(60,44,27,.20);
+      font-size: 13px;
+      line-height: 1.4;
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-width: min(720px, calc(100vw - 48px));
+      max-height: min(45vh, 320px);
+      overflow: auto;
+      transition: opacity .16s ease, transform .16s ease;
+    }
+    .toast--visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .toast--error {
+      background: rgba(120,43,36,.92);
+    }
+    .hidden {
+      display: none !important;
+    }
+    @media (min-width: 1280px) {
+      .shell {
+        grid-template-columns: 300px 400px minmax(0, 1fr);
+      }
+      .shell.is-workspace-collapsed {
+        grid-template-columns: 400px minmax(0, 1fr);
+      }
+      .shell.is-session-collapsed {
+        grid-template-columns: 300px minmax(0, 1fr);
+      }
+      .shell.is-workspace-collapsed.is-session-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+      .shell.is-workspace-collapsed,
+      .shell.is-session-collapsed,
+      .shell.is-workspace-collapsed.is-session-collapsed {
+        grid-template-columns: 1fr;
+      }
+      .header-main {
+        display: block;
+        flex-basis: 100%;
+        min-width: 100%;
+      }
+      .stats {
+        margin-top: 8px;
+      }
+      .viewer-actions {
+        margin-top: 10px;
+      }
+      .message,
+      .message.user,
+      .message.assistant,
+      .collapsed-group {
+        max-width: 100%;
+      }
+      .pane + .pane {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      }
+  </style>
+</head>
+<body>
+  <header>
+      <div class="header-row">
+        <div class="header-main">
+  <h1>语迹 <span class="version-badge">{{BUILDER_VERSION}}</span></h1>
+        <span class="app-subtitle">AI 对话记录浏览器</span>
+        <div class="stats">
+          <span class="stat" id="statSessions">会话：{{TOTAL_SESSIONS}}</span>
+          <span class="stat" id="statWorkspaces">目录：{{TOTAL_WORKSPACES}}</span>
+          <span class="stat" id="statArchived">归档：{{ARCHIVED_COUNT}}</span>
+          <span class="stat" id="statImages">含图：{{IMAGE_REF_COUNT}}</span>
+          <span class="stat" id="statGenerated" title="生成时间：{{GENERATED_AT}}" aria-label="生成时间：{{GENERATED_AT}}">{{GENERATED_AT}}</span>
+        </div>
+      </div>
+      <label class="source-selector" for="sourceSelect">来源：<select id="sourceSelect" aria-label="选择聊天记录来源"><option value="local-codex">本机 Codex</option></select></label>
+      <button type="button" id="refreshButton" class="refresh-btn" onclick="refreshIndex()">刷新</button>
+      <button type="button" id="rebuildButton" class="refresh-btn" onclick="rebuildIndex()" title="重新扫描和解析全部聊天记录，耗时可能较长" aria-label="全量重建">全量</button>
+      <button type="button" id="globalSidebarToggleButton" class="refresh-btn sidebar-toggle-btn" title="一键收起目录和标题" aria-label="一键收起目录和标题">收起</button>
+    </div>
+  </header>
+
+  <main class="shell" id="appShell">
+    <div id="collapsedControls" class="collapsed-controls" hidden>
+      <button type="button" id="expandWorkspacesButton" data-expand-pane="workspaces" hidden>展开目录</button>
+      <button type="button" id="expandTitlesButton" data-expand-pane="titles" hidden>展开标题</button>
+    </div>
+      <section class="pane" id="workspacePane">
+        <div class="pane-header">
+          <div class="pane-header-row">
+            <div class="pane-title-group">
+              <p class="pane-title">目录</p>
+              <button type="button" id="collapseWorkspacesButton" class="pane-collapse-btn" data-collapse-pane="workspaces" title="收起目录">收起</button>
+            </div>
+            <div class="header-actions">
+              <details class="sort-menu">
+                <summary>筛选</summary>
+                <div class="sort-panel">
+                  <div class="filter-group">
+                    <p class="filter-title">provider</p>
+                    <div id="workspaceProviderFilter" class="checklist"></div>
+                  </div>
+                  <div class="filter-group">
+                    <p class="filter-title">source</p>
+                    <div id="workspaceSourceFilter" class="checklist"></div>
+                  </div>
+                </div>
+              </details>
+              <details class="sort-menu">
+                <summary>排序</summary>
+                <div class="sort-panel">
+                  <label>字段
+                    <select id="workspaceSortField">
+                      <option value="path">路径名字母顺序</option>
+                      <option value="updated">最近更新时间</option>
+                      <option value="count">会话数量</option>
+                    </select>
+                  </label>
+                  <label>方向
+                    <select id="workspaceSortDirection">
+                      <option value="asc">升序</option>
+                      <option value="desc">降序</option>
+                    </select>
+                  </label>
+                </div>
+              </details>
+            </div>
+          </div>
+        <input id="workspaceFilter" type="search" placeholder="筛选工作目录..." oninput="renderWorkspaceList()">
+      </div>
+      <div id="workspaceList" class="list"></div>
+      <button class="scroll-top" type="button" onclick="scrollPaneTop('workspaceList')" title="回到目录列表顶部">↑</button>
+    </section>
+    <section class="pane" id="sessionPane">
+      <div class="pane-header">
+        <div class="pane-header-row">
+          <div class="pane-title-group">
+            <p class="pane-title">标题</p>
+            <button type="button" id="collapseTitlesButton" class="pane-collapse-btn" data-collapse-pane="titles" title="收起标题">收起</button>
+          </div>
+          <div class="header-actions">
+          <details class="sort-menu">
+            <summary>排序</summary>
+            <div class="sort-panel">
+              <label>字段
+                <select id="sessionSortField">
+                  <option value="updated">最近更新时间</option>
+                  <option value="title">标题字母顺序</option>
+                  <option value="messageCount">消息数量</option>
+                </select>
+              </label>
+              <label>方向
+                <select id="sessionSortDirection">
+                  <option value="desc">降序</option>
+                  <option value="asc">升序</option>
+                </select>
+              </label>
+            </div>
+          </details>
+          </div>
+        </div>
+        <input id="sessionFilter" type="search" placeholder="筛选标题、摘要、路径..." oninput="renderSessionList()">
+      </div>
+      <div id="sessionList" class="list"></div>
+      <button class="scroll-top" type="button" onclick="scrollPaneTop('sessionList')" title="回到标题列表顶部">↑</button>
+    </section>
+      <section class="viewer">
+        <div id="viewerHead" class="viewer-head"></div>
+      <div id="viewerToolbar" class="reader-toolbar hidden">
+        <input id="viewerSearch" type="search" placeholder="搜索...">
+        <div class="toolbar-segment toolbar-segment--search" aria-label="搜索范围">
+          <button type="button" data-search-scope="all" title="搜索当前来源下全部会话">全部</button>
+          <button type="button" data-search-scope="current" title="只搜索当前打开会话">当前</button>
+        </div>
+        <div class="toolbar-segment toolbar-segment--view" aria-label="显示模式">
+          <button type="button" data-view-mode="all">全部</button>
+          <button type="button" data-view-mode="questions" title="只看用户提问">提问</button>
+        </div>
+        <div class="toolbar-segment toolbar-segment--tools" aria-label="会话工具">
+          <button type="button" id="questionNext" data-question-nav="bottom" title="到达当前会话底部">底部</button>
+          <div id="viewerToolbarActions" class="viewer-actions"></div>
+        </div>
+      </div>
+      <div id="transcript" class="transcript" tabindex="0"></div>
+      <div id="replyComposer" class="reply-composer hidden">
+        <textarea id="replyInput" rows="2" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="输入回复内容。Enter 复制发送，Shift + Enter 换行。"></textarea>
+        <div class="reply-composer-actions">
+          <button type="button" id="clearReplyButton" class="reply-action reply-action--clear" onclick="clearReplyDraft()">清空</button>
+          <button type="button" id="copyReplyCommandButton" class="reply-action reply-action--send" onclick="copyReplyCommand()">复制发送</button>
+        </div>
+      </div>
+      <button class="scroll-top" type="button" onclick="scrollTranscriptTop()" title="回到正文顶部">↑</button>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <div id="noteContextMenu" class="note-menu" hidden></div>
+    <div id="imagePreviewModal" class="image-preview-modal" role="dialog" aria-modal="true" aria-label="图片预览" hidden>
+      <button type="button" id="imagePreviewClose" class="image-preview-close">关闭</button>
+      <img id="imagePreviewImage" alt="">
+    </div>
+    <div id="noteModal" class="note-modal" hidden>
+      <div class="note-modal-card" role="dialog" aria-modal="true" aria-labelledby="noteModalTitle">
+        <h2 id="noteModalTitle">新建备注</h2>
+        <p id="noteContextText" class="note-context"></p>
+        <textarea id="noteInput" maxlength="10000" placeholder="输入备注内容，支持多行。Ctrl+Enter 保存，Esc 取消。"></textarea>
+        <p id="noteError" class="note-error" aria-live="polite"></p>
+        <div class="note-modal-actions">
+          <button type="button" data-note-cancel>取消</button>
+          <button type="button" data-note-save>保存</button>
+        </div>
+      </div>
+    </div>
+    <div id="noteTooltip" class="note-tooltip" hidden>
+      <span class="note-tooltip-label">备注</span>
+      <div id="noteTooltipBody" class="note-tooltip-body"></div>
+    </div>
+
+    <script>
+    const INDEX_URL = '{{INDEX_URL}}';
+    const SOURCES_API_URL = '/api/sources';
+    const SOURCE_DATA_API_URL = '/api/source-data';
+    const SEARCH_API_URL = '/api/search';
+    const NOTES_API_URL = '/api/notes';
+    let APP = null;
+    let CURRENT_DETAIL = null;
+    const sessionCache = new Map();
+    let currentSourceId = 'local-codex';
+    let sourceState = {
+      selectedSourceId: 'local-codex',
+      sources: [{ id: 'local-codex', label: '本机 Codex', type: 'local-codex' }]
+    };
+    let selectedWorkspaceId = null;
+    let selectedSessionKey = null;
+  </script>
+  <script>
+    const appShell = document.getElementById('appShell');
+    const workspacePane = document.getElementById('workspacePane');
+    const sessionPane = document.getElementById('sessionPane');
+    const collapsedControls = document.getElementById('collapsedControls');
+    const collapseButtons = {
+      workspaces: document.getElementById('collapseWorkspacesButton'),
+      titles: document.getElementById('collapseTitlesButton')
+    };
+    const expandButtons = {
+      workspaces: document.getElementById('expandWorkspacesButton'),
+      titles: document.getElementById('expandTitlesButton')
+    };
+    const globalSidebarToggleButton = document.getElementById('globalSidebarToggleButton');
+    const sourceSelect = document.getElementById('sourceSelect');
+    const workspaceFilterInput = document.getElementById('workspaceFilter');
+    const sessionFilterInput = document.getElementById('sessionFilter');
+    const workspaceProviderFilter = document.getElementById('workspaceProviderFilter');
+    const workspaceSourceFilter = document.getElementById('workspaceSourceFilter');
+    const workspaceSortField = document.getElementById('workspaceSortField');
+    const workspaceSortDirection = document.getElementById('workspaceSortDirection');
+    const sessionSortField = document.getElementById('sessionSortField');
+    const sessionSortDirection = document.getElementById('sessionSortDirection');
+    const workspaceList = document.getElementById('workspaceList');
+    const sessionList = document.getElementById('sessionList');
+    const viewerHead = document.getElementById('viewerHead');
+    const viewerToolbar = document.getElementById('viewerToolbar');
+    const viewerSearchInput = document.getElementById('viewerSearch');
+    const viewerToolbarActions = document.getElementById('viewerToolbarActions');
+    const transcript = document.getElementById('transcript');
+    const replyComposer = document.getElementById('replyComposer');
+    const replyInput = document.getElementById('replyInput');
+    const clearReplyButton = document.getElementById('clearReplyButton');
+    const copyReplyCommandButton = document.getElementById('copyReplyCommandButton');
+    const questionNextButton = document.getElementById('questionNext');
+    const noteContextMenu = document.getElementById('noteContextMenu');
+    const noteModal = document.getElementById('noteModal');
+    const noteModalTitle = document.getElementById('noteModalTitle');
+    const noteContextText = document.getElementById('noteContextText');
+    const noteInput = document.getElementById('noteInput');
+    const noteError = document.getElementById('noteError');
+    const noteTooltip = document.getElementById('noteTooltip');
+    const noteTooltipBody = document.getElementById('noteTooltipBody');
+    const imagePreviewModal = document.getElementById('imagePreviewModal');
+    const imagePreviewImage = document.getElementById('imagePreviewImage');
+    const imagePreviewClose = document.getElementById('imagePreviewClose');
+    const SORT_STORAGE_KEY = 'codex-chat-index-sort-v1';
+    const MENU_SELECTOR = '.sort-menu';
+    const MAX_REPLY_LINES = 20;
+    const MAX_NOTE_LENGTH = 10000;
+    const CURRENT_SCOPE_SEARCH_DELAY_MS = 160;
+    const replyDrafts = new Map();
+    let viewerSearchInputIsComposing = false;
+    let replyInputIsComposing = false;
+    let replyComposerUpdateFrame = 0;
+    let replyInputMetrics = null;
+    const notesState = {
+      notes: new Map(),
+      loaded: false,
+      available: true
+    };
+    let activeNoteTarget = null;
+
+    let filterState = {
+      provider: ['all'],
+      source: ['all']
+    };
+    let viewerViewMode = 'all';
+    let viewerSearchScope = 'all';
+    let viewerSearchQuery = '';
+    let currentScopeSearchTimer = 0;
+    let selectedQuestionKey = null;
+    let selectedQuestionKeyIsTemporary = false;
+    let pendingQuestionFocus = 'last';
+    const sessionProgressAnchors = new Map();
+    const MAX_PROGRESS_ANCHORS = 200;
+    let progressRestoreToken = 0;
+    let globalSearchState = {
+      query: '',
+      pending: false,
+      matchKeys: null,
+      requestId: 0,
+      timer: 0,
+      error: ''
+    };
+
+    function getCurrentSourceId() {
+      return currentSourceId || 'local-codex';
+    }
+
+    function getCurrentSource() {
+      const id = getCurrentSourceId();
+      const sources = Array.isArray(sourceState.sources) ? sourceState.sources : [];
+      return sources.find(source => source && source.id === id) || (APP && APP.source) || sources[0] || { id: 'local-codex', label: '本机 Codex', type: 'local-codex' };
+    }
+
+    function isExternalSource() {
+      const source = getCurrentSource();
+      return !!(source && source.type === 'external-codex-jsonl');
+    }
+
+    function buildSourceUrl(url) {
+      if (typeof location !== 'undefined' && location.protocol === 'file:') return url;
+      return SOURCE_DATA_API_URL + '?sourceId=' + encodeURIComponent(getCurrentSourceId());
+    }
+
+    function renderSourceSelect() {
+      if (!sourceSelect) return;
+      const sources = Array.isArray(sourceState.sources) && sourceState.sources.length
+        ? sourceState.sources
+        : [{ id: 'local-codex', label: '本机 Codex', type: 'local-codex' }];
+      sourceSelect.innerHTML = sources.map(source => {
+        const id = String(source.id || 'local-codex');
+        const label = String(source.label || id);
+        return '<option value="' + escapeHtml(id) + '">' + escapeHtml(label) + '</option>';
+      }).join('');
+      sourceSelect.value = getCurrentSourceId();
+      sourceSelect.disabled = sources.length <= 1;
+    }
+
+    async function loadSources() {
+      try {
+        const response = await fetch(SOURCES_API_URL, { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        if (payload && Array.isArray(payload.sources) && payload.sources.length) {
+          sourceState = payload;
+          currentSourceId = payload.selectedSourceId || 'local-codex';
+        }
+      } catch (error) {
+        sourceState = {
+          selectedSourceId: 'local-codex',
+          sources: [{ id: 'local-codex', label: '本机 Codex', type: 'local-codex' }]
+        };
+        currentSourceId = 'local-codex';
+      }
+      renderSourceSelect();
+    }
+
+    async function saveSelectedSource(sourceId) {
+      if (typeof location !== 'undefined' && location.protocol === 'file:') return;
+      try {
+        await fetch(SOURCES_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selectedSourceId: sourceId })
+        });
+      } catch (error) {
+      }
+    }
+
+    function resetSourceScopedState() {
+      saveProgressAnchorForCurrentSession();
+      selectedWorkspaceId = null;
+      selectedSessionKey = null;
+      selectedQuestionKey = null;
+      selectedQuestionKeyIsTemporary = false;
+      pendingQuestionFocus = 'last';
+      progressRestoreToken++;
+      CURRENT_DETAIL = null;
+      sessionCache.clear();
+      notesState.notes = new Map();
+      notesState.loaded = false;
+      viewerSearchQuery = '';
+      viewerSearchScope = 'all';
+      if (viewerSearchInput) viewerSearchInput.value = '';
+      if (globalSearchState.timer) {
+        clearTimeout(globalSearchState.timer);
+      }
+      globalSearchState = {
+        query: '',
+        pending: false,
+        matchKeys: null,
+        requestId: globalSearchState.requestId + 1,
+        timer: 0,
+        error: ''
+      };
+    }
+
+    async function loadIndex() {
+      let response = await fetch(buildSourceUrl(INDEX_URL), { cache: 'no-store' });
+      if (!response.ok && getCurrentSourceId() === 'local-codex') {
+        response = await fetch(INDEX_URL, { cache: 'no-store' });
+      }
+      if (!response.ok) throw new Error('index HTTP ' + response.status);
+      APP = await response.json();
+      if (!APP || typeof APP !== 'object') APP = {};
+      if (!Array.isArray(APP.workspaces)) APP.workspaces = [];
+      if (!APP.source) APP.source = getCurrentSource();
+      currentSourceId = (APP.source && APP.source.id) || getCurrentSourceId();
+      if (sourceState && sourceState.selectedSourceId !== currentSourceId) sourceState.selectedSourceId = currentSourceId;
+      renderSourceSelect();
+      prepareData();
+      selectedWorkspaceId = APP.workspaces[0] ? APP.workspaces[0].id : null;
+      selectedSessionKey = APP.workspaces[0] && APP.workspaces[0].sessions[0] ? APP.workspaces[0].sessions[0].key : null;
+    }
+
+    async function loadSelectedDetailIfAvailable() {
+      const first = getSelectedSession();
+      if (!first) return;
+      const detail = await loadSessionDetail(first);
+      applyLoadedDetail(first, detail);
+    }
+
+    async function switchSource(sourceId) {
+      const nextSourceId = String(sourceId || 'local-codex');
+      if (!nextSourceId || nextSourceId === getCurrentSourceId()) return;
+      currentSourceId = nextSourceId;
+      if (sourceSelect) sourceSelect.value = nextSourceId;
+      await saveSelectedSource(nextSourceId);
+      resetSourceScopedState();
+      viewerHead.innerHTML = '<div class="empty-state">正在加载来源...</div>';
+      transcript.innerHTML = '';
+      await loadIndex();
+      await loadNotes();
+      updateStats();
+      refreshFilterMenus();
+      renderWorkspaceList(true);
+      try {
+        await loadSelectedDetailIfAvailable();
+      } catch (error) {
+        console.warn('来源切换后加载会话详情失败', error);
+      }
+      renderViewer();
+    }
+
+    async function loadSessionDetail(session) {
+      const key = getSessionKey(session);
+      if (sessionCache.has(key)) {
+        return sessionCache.get(key);
+      }
+      if (!session || !session.detailHref) throw new Error('detail href missing');
+
+      const response = await fetch(session.detailHref, { cache: 'no-store' });
+      if (!response.ok) throw new Error('detail HTTP ' + response.status);
+      return await response.json();
+    }
+
+    function cacheCurrentDetail(key, detail) {
+      sessionCache.clear();
+      sessionCache.set(key, detail);
+      CURRENT_DETAIL = detail;
+    }
+
+    function clearCurrentDetail() {
+      sessionCache.clear();
+      CURRENT_DETAIL = null;
+      selectedQuestionKey = null;
+      selectedQuestionKeyIsTemporary = false;
+      transcript.innerHTML = '';
+    }
+
+    function prepareData() {
+      (APP.workspaces || []).forEach(workspace => {
+        workspace._search = (workspace.cwd || '').toLowerCase();
+        workspace.sessions.forEach(session => {
+          session._search = [session.title, session.summary, session.path, workspace.cwd].join(' ').toLowerCase();
+        });
+      });
+    }
+
+    function getGlobalSearchQuery() {
+      if (viewerSearchScope === 'current') return '';
+      return (viewerSearchQuery || '').trim();
+    }
+
+    function getGlobalSearchHitSet() {
+      return globalSearchState.matchKeys;
+    }
+
+    function sessionMatchesGlobalSearch(session) {
+      const query = getGlobalSearchQuery();
+      if (!query) return true;
+      const hits = getGlobalSearchHitSet();
+      return !!(hits && hits.has(getSessionKey(session)));
+    }
+
+    function getGlobalSearchEmptyText() {
+      if (!getGlobalSearchQuery()) return '';
+      if (globalSearchState.pending) return '正在搜索所有会话...';
+      if (globalSearchState.error) return '搜索失败：' + globalSearchState.error;
+      return '没有匹配“' + viewerSearchQuery + '”的内容。';
+    }
+
+    function getEmptySourceText() {
+      if (APP && APP.needsBuild) return '当前来源尚未扫描，请点击刷新。';
+      const source = getCurrentSource();
+      if (source && source.type === 'external-codex-jsonl' && APP && !APP.totalSessions) {
+        return '当前外部来源还没有可显示的会话，请点击刷新扫描这个来源。';
+      }
+      return '';
+    }
+
+    function scheduleGlobalSearch() {
+      const query = getGlobalSearchQuery();
+      if (globalSearchState.timer) {
+        clearTimeout(globalSearchState.timer);
+        globalSearchState.timer = 0;
+      }
+
+      if (!query) {
+        globalSearchState.query = '';
+        globalSearchState.pending = false;
+        globalSearchState.matchKeys = null;
+        globalSearchState.error = '';
+        renderWorkspaceList(true);
+        renderViewer();
+        return;
+      }
+
+      globalSearchState.pending = true;
+      globalSearchState.error = '';
+      globalSearchState.matchKeys = new Set();
+      renderWorkspaceList(true);
+      renderViewer();
+      globalSearchState.timer = setTimeout(() => {
+        void runGlobalSearch(query);
+      }, 240);
+    }
+
+    function resetGlobalSearchStateForCurrentScope() {
+      if (currentScopeSearchTimer) {
+        clearTimeout(currentScopeSearchTimer);
+        currentScopeSearchTimer = 0;
+      }
+      if (globalSearchState.timer) {
+        clearTimeout(globalSearchState.timer);
+        globalSearchState.timer = 0;
+      }
+      globalSearchState.query = '';
+      globalSearchState.pending = false;
+      globalSearchState.matchKeys = null;
+      globalSearchState.error = '';
+      globalSearchState.requestId++;
+    }
+
+    function scheduleViewerSearch() {
+      if (viewerSearchScope === 'current') {
+        if (currentScopeSearchTimer) {
+          clearTimeout(currentScopeSearchTimer);
+          currentScopeSearchTimer = 0;
+        }
+        resetGlobalSearchStateForCurrentScope();
+        currentScopeSearchTimer = setTimeout(() => {
+          currentScopeSearchTimer = 0;
+          renderViewer();
+        }, CURRENT_SCOPE_SEARCH_DELAY_MS);
+        return;
+      }
+      if (currentScopeSearchTimer) {
+        clearTimeout(currentScopeSearchTimer);
+        currentScopeSearchTimer = 0;
+      }
+      scheduleGlobalSearch();
+    }
+
+    async function runGlobalSearch(query) {
+      const normalizedQuery = String(query || '').trim();
+      const requestId = ++globalSearchState.requestId;
+      if (!normalizedQuery) {
+        scheduleGlobalSearch();
+        return;
+      }
+
+      try {
+        const response = await fetch(SEARCH_API_URL + '?sourceId=' + encodeURIComponent(getCurrentSourceId()) + '&q=' + encodeURIComponent(normalizedQuery), { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        if (requestId !== globalSearchState.requestId) return;
+        if ((getGlobalSearchQuery() || '') !== normalizedQuery) return;
+        const keys = Array.isArray(payload.sessionKeys) ? payload.sessionKeys : [];
+        globalSearchState.query = normalizedQuery;
+        globalSearchState.pending = false;
+        globalSearchState.error = '';
+        globalSearchState.matchKeys = new Set(keys.map(item => String(item || '')));
+        renderWorkspaceList(true);
+        renderViewer();
+      } catch (error) {
+        if (requestId !== globalSearchState.requestId) return;
+        globalSearchState.pending = false;
+        globalSearchState.error = error && error.message ? error.message : 'unknown error';
+        globalSearchState.matchKeys = new Set();
+        renderWorkspaceList(true);
+        renderViewer();
+      }
+    }
+
+    function loadSortPrefs() {
+      try {
+        const raw = localStorage.getItem(SORT_STORAGE_KEY);
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+        if (Array.isArray(prefs.provider) && prefs.provider.length) filterState.provider = prefs.provider;
+        else if (typeof prefs.provider === 'string' && prefs.provider) filterState.provider = [prefs.provider];
+        if (Array.isArray(prefs.source) && prefs.source.length) filterState.source = prefs.source;
+        else if (typeof prefs.source === 'string' && prefs.source) filterState.source = [prefs.source];
+        if (prefs.workspaceField) workspaceSortField.value = prefs.workspaceField;
+        if (prefs.workspaceDirection) workspaceSortDirection.value = prefs.workspaceDirection;
+        if (prefs.sessionField) sessionSortField.value = prefs.sessionField;
+        if (prefs.sessionDirection) sessionSortDirection.value = prefs.sessionDirection;
+      } catch (error) {
+        console.warn('无法读取排序偏好', error);
+      }
+    }
+
+    function saveSortPrefs() {
+      const prefs = {
+        provider: filterState.provider,
+        source: filterState.source,
+        workspaceField: workspaceSortField.value,
+        workspaceDirection: workspaceSortDirection.value,
+        sessionField: sessionSortField.value,
+        sessionDirection: sessionSortDirection.value
+      };
+      localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(prefs));
+    }
+
+    function collectUniqueSessionValues(field) {
+      const values = new Set();
+      if (!APP || !Array.isArray(APP.workspaces)) return [];
+      APP.workspaces.forEach(workspace => {
+        workspace.sessions.forEach(session => {
+          const value = session[field];
+          if (value) values.add(value);
+        });
+      });
+      return Array.from(values).sort((a, b) => compareText(a, b));
+    }
+
+    function normalizeSelection(values) {
+      if (!Array.isArray(values) || !values.length) return ['all'];
+      if (values.includes('all')) return ['all'];
+      return Array.from(new Set(values));
+    }
+
+    function renderChecklist(container, values, selectedValues, key) {
+      const normalized = normalizeSelection(selectedValues);
+      container.innerHTML = '';
+      const allValues = ['all', ...values];
+      allValues.forEach(value => {
+        const label = document.createElement('label');
+        label.className = 'check-item';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = normalized.includes(value);
+        input.dataset.value = value;
+        input.dataset.filterKey = key;
+        const text = document.createElement('span');
+        text.textContent = value;
+        label.appendChild(input);
+        label.appendChild(text);
+        container.appendChild(label);
+      });
+    }
+
+    function refreshFilterMenus() {
+      renderChecklist(
+        workspaceProviderFilter,
+        collectUniqueSessionValues('modelProvider'),
+        filterState.provider,
+        'provider'
+      );
+      renderChecklist(
+        workspaceSourceFilter,
+        collectUniqueSessionValues('source'),
+        filterState.source,
+        'source'
+      );
+    }
+
+    function toggleFilterValue(filterKey, value) {
+      let next = [...(filterState[filterKey] || ['all'])];
+      if (value === 'all') {
+        next = ['all'];
+      } else if (next.includes(value)) {
+        next = next.filter(item => item !== value && item !== 'all');
+      } else {
+        next = next.filter(item => item !== 'all');
+        next.push(value);
+      }
+      filterState[filterKey] = normalizeSelection(next);
+      saveSortPrefs();
+      refreshFilterMenus();
+      renderWorkspaceList();
+    }
+
+    function matchMultiSelect(value, selectedValues) {
+      const normalized = normalizeSelection(selectedValues);
+      if (normalized.includes('all')) return true;
+      return normalized.includes(value || '');
+    }
+
+    function compareText(a, b) {
+      return String(a || '').localeCompare(String(b || ''), 'zh-CN', {
+        numeric: true,
+        sensitivity: 'base'
+      });
+    }
+
+    function compareNumber(a, b) {
+      return (Number(a) || 0) - (Number(b) || 0);
+    }
+
+    function compareDate(a, b) {
+      return Date.parse(a || '') - Date.parse(b || '');
+    }
+
+    function applyDirection(value, direction) {
+      return direction === 'desc' ? -value : value;
+    }
+
+    function sortWorkspaces(items) {
+      const field = workspaceSortField.value;
+      const direction = workspaceSortDirection.value;
+      return [...items].sort((a, b) => {
+        let result = 0;
+        if (field === 'updated') {
+          result = compareDate(a.workspace.latestUpdatedAt, b.workspace.latestUpdatedAt);
+        } else if (field === 'count') {
+          result = compareNumber(a.workspace.count, b.workspace.count);
+        } else {
+          result = compareText(a.workspace.cwd, b.workspace.cwd);
+        }
+        if (result === 0) result = compareText(a.workspace.cwd, b.workspace.cwd);
+        return applyDirection(result, direction);
+      });
+    }
+
+    function sortSessions(items) {
+      const field = sessionSortField.value;
+      const direction = sessionSortDirection.value;
+      return [...items].sort((a, b) => {
+        let result = 0;
+        if (field === 'title') {
+          result = compareText(a.title, b.title);
+        } else if (field === 'messageCount') {
+          result = compareNumber(a.messageCount, b.messageCount);
+        } else {
+          result = compareDate(a.updatedAt, b.updatedAt);
+        }
+        if (result === 0) result = compareDate(a.updatedAt, b.updatedAt);
+        if (result === 0) result = compareText(a.title, b.title);
+        return applyDirection(result, direction);
+      });
+    }
+
+    loadSortPrefs();
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function truncateDisplayText(value, maxLength) {
+      const text = String(value || '');
+      const limit = Number(maxLength) > 0 ? Number(maxLength) : 300;
+      if (text.length <= limit) return text;
+      return text.slice(0, limit) + '...';
+    }
+
+    function groupSessionsByTitle(sessions) {
+      const groups = new Map();
+      (sessions || []).forEach(session => {
+        const title = session.title || '(未命名标题)';
+        if (!groups.has(title)) {
+          groups.set(title, {
+            title,
+            sessions: [],
+            latestUpdatedAt: '',
+            latestUpdatedLocal: ''
+          });
+        }
+        const group = groups.get(title);
+        group.sessions.push(session);
+        if (!group.latestUpdatedAt || compareDate(session.updatedAt, group.latestUpdatedAt) > 0) {
+          group.latestUpdatedAt = session.updatedAt || '';
+          group.latestUpdatedLocal = session.updatedLocal || '';
+        }
+      });
+
+      return Array.from(groups.values()).sort((a, b) => {
+        let result = compareDate(a.latestUpdatedAt, b.latestUpdatedAt);
+        if (result === 0) result = compareText(a.title, b.title);
+        return result * -1;
+      });
+    }
+
+    function hasMultipleSessionBranches(group) {
+      return !!(group && Array.isArray(group.sessions) && group.sessions.length > 1);
+    }
+
+    function formatSessionMeta(session) {
+      if (!session) return '';
+      const parts = [];
+      if (session.updatedLocal) parts.push(session.updatedLocal);
+      parts.push('用户 ' + (session.userCount || 0));
+      parts.push('回答 ' + (session.assistantCount || 0));
+      if (session.archived) parts.push('归档');
+      if (session.hasImageReference) parts.push('含图片');
+      return parts.join(' · ');
+    }
+
+    function formatTitleGroupMeta(group) {
+      if (!group) return '';
+      if (!hasMultipleSessionBranches(group)) {
+        return formatSessionMeta(group.sessions && group.sessions[0]);
+      }
+      const parts = ['分支 ' + group.sessions.length];
+      if (group.latestUpdatedLocal) parts.push('最新 ' + group.latestUpdatedLocal);
+      return parts.join(' · ');
+    }
+
+    function getVisibleWorkspaces() {
+      if (!APP || !Array.isArray(APP.workspaces)) return [];
+      const workspaceQuery = workspaceFilterInput.value.trim().toLowerCase();
+      const sessionQuery = sessionFilterInput.value.trim().toLowerCase();
+      const providerValues = filterState.provider;
+      const sourceValues = filterState.source;
+
+      const visible = APP.workspaces.map(workspace => {
+        const workspaceMatch = !workspaceQuery || workspace._search.includes(workspaceQuery);
+        const filteredSessions = workspace.sessions.filter(session => {
+          const sessionMatch = !sessionQuery || session._search.includes(sessionQuery);
+          const providerMatch = matchMultiSelect(session.modelProvider, providerValues);
+          const sourceMatch = matchMultiSelect(session.source, sourceValues);
+          const globalSearchMatch = sessionMatchesGlobalSearch(session);
+          return sessionMatch && providerMatch && sourceMatch && globalSearchMatch;
+        });
+
+        if (!workspaceMatch || !filteredSessions.length) {
+          return null;
+        }
+
+        return {
+          workspace,
+          sessions: sortSessions(filteredSessions)
+        };
+      }).filter(Boolean);
+
+      return sortWorkspaces(visible);
+    }
+
+    function getSessionKey(session) {
+      return session && (session.key || session.path || session.id || '');
+    }
+
+    function stableHash(value) {
+      const text = String(value || '');
+      let hash = 2166136261;
+      for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0');
+    }
+
+    function createGroupNoteTarget(workspace, group) {
+      const cwd = (workspace && workspace.cwd) || '';
+      const title = (group && group.title) || '';
+      const sourceId = typeof getCurrentSourceId === 'function' ? getCurrentSourceId() : 'local-codex';
+      return {
+        key: 'group:' + sourceId + ':' + stableHash(cwd) + ':' + stableHash(title),
+        type: 'group',
+        sourceId,
+        workspace: cwd,
+        title,
+        path: '',
+        sessionId: '',
+        context: title
+      };
+    }
+
+    function createSessionNoteTarget(workspace, group, session) {
+      const identity = (session && (session.path || session.key || session.id)) || '';
+      const sourceId = typeof getCurrentSourceId === 'function' ? getCurrentSourceId() : 'local-codex';
+      return {
+        key: 'session:' + sourceId + ':' + stableHash(identity),
+        type: 'session',
+        sourceId,
+        workspace: (workspace && workspace.cwd) || '',
+        title: (group && group.title) || (session && session.title) || '',
+        path: (session && session.path) || '',
+        sessionId: (session && session.id) || '',
+        context: (session && (session.path || session.title || session.id)) || ''
+      };
+    }
+
+    function getNote(key) {
+      return notesState.notes.get(String(key || '')) || null;
+    }
+
+    function applyNoteMetadata(element, target, fallbackTitle) {
+      if (!element || !target) return;
+      const note = getNote(target.key);
+      element.dataset.noteKey = target.key || '';
+      element.dataset.noteType = target.type || '';
+      element.dataset.noteWorkspace = target.workspace || '';
+      element.dataset.noteTitle = target.title || '';
+      element.dataset.notePath = target.path || '';
+      element.dataset.noteSessionId = target.sessionId || '';
+      element.dataset.noteContext = target.context || fallbackTitle || '';
+      if (note && note.note) {
+        element.removeAttribute('title');
+        element.dataset.noteText = note.note;
+        element.classList.toggle('has-note', true);
+      } else {
+        element.setAttribute('title', fallbackTitle || '');
+        delete element.dataset.noteText;
+        element.classList.toggle('has-note', false);
+      }
+    }
+
+    async function loadNotes() {
+      try {
+        const response = await fetch(NOTES_API_URL + '?sourceId=' + encodeURIComponent(getCurrentSourceId()), { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        const notes = payload && payload.notes && typeof payload.notes === 'object' ? payload.notes : {};
+        notesState.notes = new Map(Object.entries(notes));
+        notesState.loaded = true;
+        notesState.available = true;
+      } catch (error) {
+        notesState.notes = new Map();
+        notesState.loaded = true;
+        notesState.available = false;
+        console.warn('备注读取失败', error);
+      }
+    }
+
+    function noteTargetFromElement(element) {
+      if (!element || !element.dataset || !element.dataset.noteKey) return null;
+      return {
+        key: element.dataset.noteKey || '',
+        type: element.dataset.noteType || '',
+        sourceId: getCurrentSourceId(),
+        workspace: element.dataset.noteWorkspace || '',
+        title: element.dataset.noteTitle || '',
+        path: element.dataset.notePath || '',
+        sessionId: element.dataset.noteSessionId || '',
+        context: element.dataset.noteContext || ''
+      };
+    }
+
+    function closeNoteMenu() {
+      if (noteContextMenu) {
+        noteContextMenu.hidden = true;
+        noteContextMenu.innerHTML = '';
+      }
+      activeNoteTarget = null;
+    }
+
+    const PANE_COLLAPSE_STORAGE_KEYS = {
+      workspaces: 'Yuji.sidebarCollapsed.workspaces',
+      titles: 'Yuji.sidebarCollapsed.titles'
+    };
+
+    function readBooleanStorage(key) {
+      try {
+        return localStorage.getItem(key) === 'true';
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function getStoredPaneCollapseState() {
+      return {
+        workspaces: readBooleanStorage(PANE_COLLAPSE_STORAGE_KEYS.workspaces),
+        titles: readBooleanStorage(PANE_COLLAPSE_STORAGE_KEYS.titles)
+      };
+    }
+
+    let paneCollapseState = getStoredPaneCollapseState();
+    syncPaneCollapseState();
+
+    function setSidebarCollapsedState(nextState, options) {
+      const settings = Object.assign({ persist: true, preserveScroll: false }, options || {});
+      const savedScrollTop = settings.preserveScroll && typeof transcript !== 'undefined' && transcript
+        ? transcript.scrollTop
+        : null;
+      paneCollapseState = {
+        workspaces: !!nextState.workspaces,
+        titles: !!nextState.titles
+      };
+      if (settings.persist) {
+        try {
+          localStorage.setItem(PANE_COLLAPSE_STORAGE_KEYS.workspaces, paneCollapseState.workspaces ? 'true' : 'false');
+          localStorage.setItem(PANE_COLLAPSE_STORAGE_KEYS.titles, paneCollapseState.titles ? 'true' : 'false');
+        } catch (error) {
+        }
+      }
+      syncPaneCollapseState();
+      if (savedScrollTop !== null && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          if (typeof transcript !== 'undefined' && transcript) transcript.scrollTop = savedScrollTop;
+        });
+      }
+    }
+
+    function setPaneCollapsed(pane, collapsed) {
+      if (pane !== 'workspaces' && pane !== 'titles') return;
+      const nextState = Object.assign({}, paneCollapseState);
+      nextState[pane] = !!collapsed;
+      setSidebarCollapsedState(nextState);
+    }
+
+    function toggleAllSidebars() {
+      const allCollapsed = !!paneCollapseState.workspaces && !!paneCollapseState.titles;
+      setSidebarCollapsedState({
+        workspaces: !allCollapsed,
+        titles: !allCollapsed
+      }, { preserveScroll: true });
+    }
+
+    function syncPaneCollapseState() {
+      const workspaceCollapsed = !!paneCollapseState.workspaces;
+      const sessionCollapsed = !!paneCollapseState.titles;
+      const allCollapsed = workspaceCollapsed && sessionCollapsed;
+      if (typeof appShell !== 'undefined' && appShell) {
+        appShell.classList.toggle('is-workspace-collapsed', workspaceCollapsed);
+        appShell.classList.toggle('is-session-collapsed', sessionCollapsed);
+      }
+      if (typeof workspacePane !== 'undefined' && workspacePane) workspacePane.classList.toggle('is-collapsed', workspaceCollapsed);
+      if (typeof sessionPane !== 'undefined' && sessionPane) sessionPane.classList.toggle('is-collapsed', sessionCollapsed);
+      if (typeof collapseButtons !== 'undefined') {
+        if (collapseButtons.workspaces) collapseButtons.workspaces.hidden = workspaceCollapsed;
+        if (collapseButtons.titles) collapseButtons.titles.hidden = sessionCollapsed;
+      }
+      if (typeof expandButtons !== 'undefined') {
+        if (expandButtons.workspaces) expandButtons.workspaces.hidden = !workspaceCollapsed;
+        if (expandButtons.titles) expandButtons.titles.hidden = !sessionCollapsed;
+      }
+      if (typeof collapsedControls !== 'undefined' && collapsedControls) collapsedControls.hidden = !(workspaceCollapsed || sessionCollapsed);
+      if (typeof globalSidebarToggleButton !== 'undefined' && globalSidebarToggleButton) {
+        const label = allCollapsed ? '展开' : '收起';
+        const title = allCollapsed ? '一键展开目录和标题' : '一键收起目录和标题';
+        globalSidebarToggleButton.textContent = label;
+        globalSidebarToggleButton.title = title;
+        globalSidebarToggleButton.setAttribute('aria-label', title);
+      }
+    }
+
+    function positionFloatingPanel(panel, x, y) {
+      if (!panel) return;
+      panel.hidden = false;
+      panel.style.left = '0px';
+      panel.style.top = '0px';
+      const rect = panel.getBoundingClientRect();
+      const margin = 10;
+      let left = x + 10;
+      let top = y + 10;
+      if (left + rect.width + margin > window.innerWidth) {
+        left = Math.max(margin, x - rect.width - 10);
+      }
+      if (top + rect.height + margin > window.innerHeight) {
+        top = Math.max(margin, y - rect.height - 10);
+      }
+      panel.style.left = left + 'px';
+      panel.style.top = top + 'px';
+    }
+
+    function openNoteMenu(event, target) {
+      if (!noteContextMenu || !target) return;
+      closeNoteMenu();
+      hideNoteTooltip();
+      activeNoteTarget = target;
+      const hasNote = !!getNote(target.key);
+      const actions = hasNote
+        ? [
+            ['edit', '编辑备注'],
+            ['delete', '删除备注']
+          ]
+        : [
+            ['new', '新建备注']
+          ];
+      noteContextMenu.innerHTML = actions.map(action => '<button type="button" data-note-action="' + action[0] + '">' + action[1] + '</button>').join('');
+      positionFloatingPanel(noteContextMenu, event.clientX || 0, event.clientY || 0);
+    }
+
+    function closeNoteModal() {
+      if (!noteModal) return;
+      noteModal.hidden = true;
+      if (noteError) noteError.textContent = '';
+      activeNoteTarget = null;
+    }
+
+    function openNoteModal(target) {
+      if (!noteModal || !noteInput || !target) return;
+      activeNoteTarget = target;
+      const existing = getNote(target.key);
+      noteModalTitle.textContent = existing ? '编辑备注' : '新建备注';
+      noteContextText.textContent = target.context || target.title || target.path || target.key;
+      noteInput.value = existing && existing.note ? existing.note : '';
+      if (noteError) noteError.textContent = '';
+      noteModal.hidden = false;
+      requestAnimationFrame(() => noteInput.focus());
+    }
+
+    async function saveActiveNote() {
+      if (!activeNoteTarget || !noteInput) return;
+      const note = String(noteInput.value || '').trim();
+      if (!note) {
+        if (noteError) noteError.textContent = '备注不能为空；如果不需要备注，请使用删除备注。';
+        return;
+      }
+      if (note.length > MAX_NOTE_LENGTH) {
+        if (noteError) noteError.textContent = '备注太长，最多 ' + MAX_NOTE_LENGTH + ' 字。';
+        return;
+      }
+      try {
+        const response = await fetch(NOTES_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({}, activeNoteTarget, { sourceId: getCurrentSourceId(), note }))
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+        notesState.notes.set(activeNoteTarget.key, payload.item || Object.assign({}, activeNoteTarget, { note }));
+        notesState.available = true;
+        closeNoteModal();
+        renderSessionList(true);
+        showToast('备注已保存');
+      } catch (error) {
+        if (noteError) noteError.textContent = '保存失败：' + (error.message || '未知错误');
+        showToast('保存备注失败：请通过 Open-CodexChatIndex.cmd 打开以编辑备注。', { tone: 'error', duration: 3200 });
+      }
+    }
+
+    async function deleteNoteForTarget(target) {
+      if (!target) return;
+      if (!confirm('确定删除这条备注吗？')) return;
+      try {
+        const response = await fetch(NOTES_API_URL, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: target.key, sourceId: getCurrentSourceId() })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+        notesState.notes.delete(target.key);
+        closeNoteMenu();
+        renderSessionList(true);
+        showToast('备注已删除');
+      } catch (error) {
+        showToast('删除备注失败：' + (error.message || '未知错误'), { tone: 'error', duration: 3200 });
+      }
+    }
+
+    function showNoteTooltip(event, target) {
+      const note = target && getNote(target.key);
+      if (!note || !note.note || !noteTooltip || !noteTooltipBody) return;
+      noteTooltipBody.textContent = note.note;
+      positionFloatingPanel(noteTooltip, event.clientX || 0, event.clientY || 0);
+    }
+
+    function moveNoteTooltip(event) {
+      if (!noteTooltip || noteTooltip.hidden) return;
+      positionFloatingPanel(noteTooltip, event.clientX || 0, event.clientY || 0);
+    }
+
+    function hideNoteTooltip() {
+      if (!noteTooltip) return;
+      noteTooltip.hidden = true;
+    }
+
+    function updateStats() {
+      if (!APP) return;
+      document.getElementById('statSessions').textContent = '会话：' + APP.totalSessions;
+      document.getElementById('statWorkspaces').textContent = '目录：' + APP.totalWorkspaces;
+      document.getElementById('statArchived').textContent = '归档：' + APP.archived;
+      document.getElementById('statImages').textContent = '含图：' + APP.imageReferences;
+      const generated = document.getElementById('statGenerated');
+      generated.textContent = APP.generatedAt || '';
+      generated.title = '生成时间：' + (APP.generatedAt || '');
+      generated.setAttribute('aria-label', '生成时间：' + (APP.generatedAt || ''));
+    }
+
+    function collectSessionMap(data) {
+      const map = new Map();
+      ((data && data.workspaces) || []).forEach(workspace => {
+        workspace.sessions.forEach(session => {
+          map.set(getSessionKey(session), {
+            workspace: workspace.cwd,
+            session,
+            signature: sessionSignature(session)
+          });
+        });
+      });
+      return map;
+    }
+
+    function sessionSignature(session) {
+      return [
+        session.updatedLocal || '',
+        session.userCount || 0,
+        session.assistantCount || 0,
+        session.detailHref || ''
+      ].join('|');
+    }
+
+    function flattenSessions(data) {
+      const sessions = [];
+      ((data && data.workspaces) || []).forEach(workspace => {
+        workspace.sessions.forEach(session => {
+          sessions.push({ workspace: workspace.cwd, session });
+        });
+      });
+      return sessions;
+    }
+
+    function collectWorkspaceSet(data) {
+      return new Set(((data && data.workspaces) || []).map(workspace => workspace.cwd || '(未知工作目录)'));
+    }
+
+    function countUniqueWorkspaces(items) {
+      return new Set(items.map(item => item.workspace || '(未知工作目录)')).size;
+    }
+
+    function groupChangesByWorkspace(items) {
+      const buckets = new Map();
+      items.forEach(item => {
+        const key = item.workspace || '(未知工作目录)';
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(item);
+      });
+
+      const rows = Array.from(buckets.entries()).map(([workspace, changes]) => ({
+        workspace,
+        changes
+      }));
+
+      rows.sort((a, b) => {
+        if (b.changes.length !== a.changes.length) return b.changes.length - a.changes.length;
+        return a.workspace.localeCompare(b.workspace, 'zh-CN');
+      });
+
+      return rows;
+    }
+
+    function formatGroupedChangeMessage(title, items, mapper) {
+      if (!items.length) return '';
+      const groups = groupChangesByWorkspace(items);
+      const lines = [title + ' ' + items.length + ' 条：', ''];
+
+      groups.slice(0, 8).forEach(group => {
+        lines.push('【' + group.workspace + '】');
+        group.changes.slice(0, 4).forEach(change => {
+          lines.push(mapper(change));
+        });
+        if (group.changes.length > 4) {
+          lines.push('  其余 ' + (group.changes.length - 4) + ' 条未展开');
+        }
+        lines.push('');
+      });
+
+      if (groups.length > 8) {
+        lines.push('其余 ' + (groups.length - 8) + ' 个工作目录未在弹窗中展开。');
+      }
+
+      return lines.join('\n').trim();
+    }
+
+    function setRefreshButtonLoading(button, isLoading, loadingText, idleText) {
+      if (!button) return;
+      button.disabled = isLoading;
+      button.textContent = isLoading ? loadingText : idleText;
+      if (button.classList) {
+        if (isLoading) button.classList.add('is-loading');
+        else button.classList.remove('is-loading');
+      }
+      if (isLoading && typeof button.setAttribute === 'function') {
+        button.setAttribute('aria-busy', 'true');
+      }
+      if (!isLoading && typeof button.removeAttribute === 'function') {
+        button.removeAttribute('aria-busy');
+      }
+    }
+
+    function formatRefreshSummary(mode, payload, added, updated) {
+      const label = mode === 'current' ? '快刷' : (mode === 'rebuild' ? '全量重建' : '刷新');
+      const parts = [];
+      const notice = String(payload.notice || '').trim();
+      const parsed = Number(payload.parsedCount || 0);
+      const reused = Number(payload.reusedCount || 0);
+      const scanned = Number(payload.scannedCount || 0);
+      const elapsedMs = Number(payload.elapsedMs || 0);
+      const elapsedText = elapsedMs ? '，用时 ' + (elapsedMs / 1000).toFixed(1) + ' 秒' : '';
+      if (notice) parts.push(notice);
+      parts.push(label + '完成：扫描 ' + scanned + ' 条，解析 ' + parsed + ' 条，复用 ' + reused + ' 条' + elapsedText + '。');
+      if (added.length) parts.push('新增聊天记录 ' + added.length + ' 条。');
+      if (updated.length) parts.push('已有聊天更新 ' + updated.length + ' 条。');
+      if (!added.length && !updated.length) parts.push('没有发现新增或变化的聊天记录。');
+      return parts.join('\n');
+    }
+
+    function buildSelectedSessionRequestBody() {
+      const session = getSelectedSession();
+      return session && session.path ? { path: session.path } : null;
+    }
+
+    function bodyWithSourceId(body) {
+      const sourceId = typeof getCurrentSourceId === 'function' ? getCurrentSourceId() : 'local-codex';
+      return Object.assign({}, body || {}, { sourceId });
+    }
+
+    async function runRefreshRequest(mode, options) {
+      const settings = Object.assign({
+        endpoint: '/api/refresh',
+        buttonId: 'refreshButton',
+        idleText: '刷新',
+        loadingText: '刷新中...',
+        body: null,
+        preNotice: ''
+      }, options || {});
+      if (runRefreshRequest._running) return;
+      runRefreshRequest._running = true;
+      const button = typeof document !== 'undefined' ? document.getElementById(settings.buttonId) : null;
+      if (settings.preNotice) {
+        showToast(settings.preNotice, { duration: 1800 });
+      }
+      setRefreshButtonLoading(button, true, settings.loadingText, settings.idleText);
+      try {
+        const currentApp = APP && Array.isArray(APP.workspaces) ? APP : { workspaces: [] };
+        const beforeMap = collectSessionMap(currentApp);
+        const beforeWorkspaceSet = collectWorkspaceSet(currentApp);
+        const previousWorkspaceId = selectedWorkspaceId;
+        const previousSessionKey = selectedSessionKey;
+        const refreshAnchor = typeof captureProgressAnchor === 'function' ? captureProgressAnchor(getSelectedSession()) : null;
+        if (refreshAnchor && typeof saveProgressAnchor === 'function') saveProgressAnchor(refreshAnchor);
+        const refreshRestoreToken = typeof progressRestoreToken !== 'undefined' ? ++progressRestoreToken : 0;
+        const previousWorkspace = currentApp.workspaces.find(workspace => workspace.id === previousWorkspaceId);
+        const previousWorkspacePath = previousWorkspace ? previousWorkspace.cwd : '';
+        const request = {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyWithSourceId(settings.body))
+        };
+        const response = await fetch(settings.endpoint, request);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        if (!payload.ok) throw new Error(payload.error || 'refresh failed');
+
+        APP = payload.data;
+        if (!APP || typeof APP !== 'object') APP = { workspaces: [] };
+        if (!Array.isArray(APP.workspaces)) APP.workspaces = [];
+        const refreshedSourceId = (APP.source && APP.source.id) || (typeof getCurrentSourceId === 'function' ? getCurrentSourceId() : 'local-codex');
+        if (typeof currentSourceId !== 'undefined') currentSourceId = refreshedSourceId;
+        if (typeof sourceState !== 'undefined' && sourceState) sourceState.selectedSourceId = refreshedSourceId;
+        if (typeof renderSourceSelect === 'function') renderSourceSelect();
+        prepareData();
+        if (typeof getGlobalSearchQuery === 'function' && typeof runGlobalSearch === 'function' && getGlobalSearchQuery()) {
+          await runGlobalSearch(getGlobalSearchQuery());
+        }
+        updateStats();
+        refreshFilterMenus();
+        sessionCache.clear();
+        CURRENT_DETAIL = null;
+
+        const flattened = flattenSessions(APP);
+        const afterWorkspaceSet = collectWorkspaceSet(APP);
+        const added = flattened.filter(item => !beforeMap.has(getSessionKey(item.session)));
+        const updated = flattened.filter(item => {
+          const before = beforeMap.get(getSessionKey(item.session));
+          return before && before.signature !== sessionSignature(item.session);
+        });
+        const nextWorkspace = APP.workspaces.find(workspace => workspace.cwd === previousWorkspacePath);
+        const previousSession = nextWorkspace && nextWorkspace.sessions.find(session => getSessionKey(session) === previousSessionKey);
+        selectedWorkspaceId = nextWorkspace ? nextWorkspace.id : (APP.workspaces[0] ? APP.workspaces[0].id : null);
+        selectedSessionKey = previousSession ? previousSessionKey : (APP.workspaces[0] && APP.workspaces[0].sessions[0] ? APP.workspaces[0].sessions[0].key : null);
+        if (!previousSession) {
+          selectedQuestionKey = null;
+          selectedQuestionKeyIsTemporary = false;
+        }
+        renderWorkspaceList(true);
+
+        const selectedAfterRefresh = getSelectedSession();
+        if (selectedAfterRefresh) {
+          try {
+            const detail = payload.currentDetail && detailMatchesSession(selectedAfterRefresh, payload.currentDetail)
+              ? payload.currentDetail
+              : await loadSessionDetail(selectedAfterRefresh);
+            if (applyLoadedDetail(selectedAfterRefresh, detail)) {
+              renderViewer();
+              if (refreshAnchor && typeof restoreProgressAnchor === 'function' && selectedAfterRefresh && getSessionKey(selectedAfterRefresh) === refreshAnchor.sessionKey) {
+                restoreProgressAnchor(refreshAnchor, { token: refreshRestoreToken, behavior: 'auto' });
+              } else {
+                requestAnimationFrame(() => focusTranscriptForQuestionNavigation());
+              }
+            }
+          } catch (detailError) {
+            console.warn('刷新后加载会话详情失败', detailError);
+          }
+        }
+
+        const message = formatRefreshSummary(mode, payload, added, updated);
+        showToast(message, { duration: 3200 });
+      } catch (error) {
+        showToast('刷新失败：' + (error.message || '未知错误') + '\n请确认页面是通过 Open-CodexChatIndex.cmd 打开的。', { tone: 'error', duration: 3600 });
+      } finally {
+        setRefreshButtonLoading(button, false, settings.loadingText, settings.idleText);
+        runRefreshRequest._running = false;
+      }
+    }
+
+    async function refreshIndex() {
+      return runRefreshRequest('incremental', {
+        endpoint: '/api/refresh',
+        buttonId: 'refreshButton',
+        idleText: '刷新',
+        loadingText: '刷新中...',
+        body: buildSelectedSessionRequestBody()
+      });
+    }
+
+    async function refreshCurrentSession() {
+      const session = getSelectedSession();
+      if (!session || !session.path) {
+        showToast('当前没有可快刷的会话。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      return runRefreshRequest('current', {
+        endpoint: '/api/refresh-current',
+        buttonId: 'refreshCurrentButton',
+        idleText: '快刷',
+        loadingText: '快刷中...',
+        body: { path: session.path }
+      });
+    }
+
+    async function rebuildIndex() {
+      return runRefreshRequest('rebuild', {
+        endpoint: '/api/rebuild',
+        buttonId: 'rebuildButton',
+        idleText: '全量',
+        loadingText: '重建中...',
+        body: buildSelectedSessionRequestBody(),
+        preNotice: '全量重建会重新扫描和解析全部聊天记录，耗时可能较长。'
+      });
+    }
+
+    function focusTranscriptForQuestionNavigation() {
+      if (!selectedQuestionKey || !transcript || typeof transcript.focus !== 'function') return false;
+      transcript.focus({ preventScroll: true });
+      return true;
+    }
+
+    function scrollPaneTop(id) {
+      const el = document.getElementById(id);
+      if (el) el.scrollTo({ top: 0, behavior: 'smooth' });
+      if (id === 'transcript') {
+        scrollTranscriptTop();
+      }
+    }
+
+    function scrollTranscriptTop() {
+      if (focusFirstQuestion({ scroll: false })) {
+        focusTranscriptForQuestionNavigation();
+      }
+      if (!transcript || typeof transcript.scrollTo !== 'function') return;
+      cancelQuestionScrollAnimation();
+      const token = ++activeQuestionScrollToken;
+      lockTranscriptLayoutForProgrammaticScroll();
+      let stableFrames = 0;
+      let attempts = 0;
+      const minAttempts = 8;
+      const maxAttempts = 36;
+      const settleUnlockedTop = () => {
+        let unlockedStableFrames = 0;
+        let unlockedAttempts = 0;
+        const minUnlockedAttempts = 6;
+        const maxUnlockedAttempts = 24;
+        const settle = () => {
+          if (token !== activeQuestionScrollToken) return;
+          transcript.scrollTo({ top: 0, behavior: 'auto' });
+          unlockedStableFrames = (transcript.scrollTop || 0) <= 2 ? unlockedStableFrames + 1 : 0;
+          unlockedAttempts++;
+          if ((unlockedAttempts >= minUnlockedAttempts && unlockedStableFrames >= 3) || unlockedAttempts >= maxUnlockedAttempts) {
+            return;
+          }
+          requestAnimationFrame(settle);
+        };
+        requestAnimationFrame(settle);
+      };
+      const followTop = () => {
+        if (token !== activeQuestionScrollToken) return;
+        transcript.scrollTo({ top: 0, behavior: 'auto' });
+        stableFrames = (transcript.scrollTop || 0) <= 2 ? stableFrames + 1 : 0;
+        attempts++;
+        if ((attempts >= minAttempts && stableFrames >= 3) || attempts >= maxAttempts) {
+          unlockTranscriptLayoutForProgrammaticScroll();
+          settleUnlockedTop();
+          return;
+        }
+        requestAnimationFrame(followTop);
+      };
+      requestAnimationFrame(followTop);
+    }
+
+    function scrollTranscriptBottom() {
+      if (focusLastQuestion({ scroll: false })) {
+        focusTranscriptForQuestionNavigation();
+      }
+      if (!transcript || typeof transcript.scrollTo !== 'function') return;
+      cancelQuestionScrollAnimation();
+      const token = ++activeQuestionScrollToken;
+      lockTranscriptLayoutForProgrammaticScroll();
+      let stableFrames = 0;
+      let attempts = 0;
+      const minAttempts = 12;
+      const maxAttempts = 48;
+      const settleUnlockedBottom = () => {
+        let unlockedStableFrames = 0;
+        let unlockedAttempts = 0;
+        const minUnlockedAttempts = 8;
+        const maxUnlockedAttempts = 36;
+        const settle = () => {
+          if (token !== activeQuestionScrollToken) return;
+          const bottomTop = Math.max(0, transcript.scrollHeight);
+          transcript.scrollTo({ top: bottomTop, behavior: 'auto' });
+          const bottomGap = Math.max(0, transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop);
+          unlockedStableFrames = bottomGap <= 2 ? unlockedStableFrames + 1 : 0;
+          unlockedAttempts++;
+          if ((unlockedAttempts >= minUnlockedAttempts && unlockedStableFrames >= 4) || unlockedAttempts >= maxUnlockedAttempts) {
+            return;
+          }
+          requestAnimationFrame(settle);
+        };
+        requestAnimationFrame(settle);
+      };
+      const followBottom = () => {
+        if (token !== activeQuestionScrollToken) return;
+        const bottomTop = Math.max(0, transcript.scrollHeight);
+        transcript.scrollTo({ top: bottomTop, behavior: 'auto' });
+        const bottomGap = Math.max(0, transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop);
+        stableFrames = bottomGap <= 2 ? stableFrames + 1 : 0;
+        attempts++;
+        if ((attempts >= minAttempts && stableFrames >= 4) || attempts >= maxAttempts) {
+          unlockTranscriptLayoutForProgrammaticScroll();
+          settleUnlockedBottom();
+          return;
+        }
+        requestAnimationFrame(followBottom);
+      };
+      requestAnimationFrame(followBottom);
+    }
+
+    function ensureSelection() {
+      const visible = getVisibleWorkspaces();
+      if (!visible.length) {
+        return;
+      }
+
+      const workspaceVisible = visible.find(item => item.workspace.id === selectedWorkspaceId);
+      if (!workspaceVisible) {
+        if (getGlobalSearchQuery()) {
+          return;
+        }
+        selectedWorkspaceId = visible[0].workspace.id;
+      }
+
+      const currentWorkspace = visible.find(item => item.workspace.id === selectedWorkspaceId) || visible[0];
+      if (!currentWorkspace.sessions.length) {
+        return;
+      }
+
+      const sessionVisible = currentWorkspace.sessions.find(item => getSessionKey(item) === selectedSessionKey);
+      if (!sessionVisible) {
+        if (getGlobalSearchQuery()) {
+          return;
+        }
+        selectedSessionKey = currentWorkspace.sessions[0].key;
+      }
+    }
+
+    function isDetailLoadedForSession(session) {
+      if (!session || !CURRENT_DETAIL) return false;
+      if (CURRENT_DETAIL.path && session.path) return CURRENT_DETAIL.path === session.path;
+      if (CURRENT_DETAIL.id && session.id) return CURRENT_DETAIL.id === session.id;
+      return false;
+    }
+
+    function detailMatchesSession(session, detail) {
+      if (!session || !detail) return false;
+      if (detail.path && session.path) return detail.path === session.path;
+      if (detail.id && session.id) return detail.id === session.id;
+      return false;
+    }
+
+    function applyLoadedDetail(session, detail) {
+      if (!detailMatchesSession(session, detail)) return false;
+      if (getSessionKey(session) !== selectedSessionKey) return false;
+      cacheCurrentDetail(getSessionKey(session), detail);
+      return true;
+    }
+
+    function getCurrentDetailEvents() {
+      if (!CURRENT_DETAIL || !Array.isArray(CURRENT_DETAIL.events)) return [];
+      return CURRENT_DETAIL.events.filter(event => {
+        return event && ['user', 'assistant_commentary', 'assistant_final', 'tool', 'system'].includes(event.kind);
+      });
+    }
+
+    function getQuestionKey(session, eventIndex) {
+      return getSessionKey(session) + '::question::' + String(eventIndex);
+    }
+
+    function getWorkspaceForSession(session) {
+      if (!APP || !Array.isArray(APP.workspaces)) return null;
+      if (!session && selectedWorkspaceId) {
+        return APP.workspaces.find(workspace => workspace.id === selectedWorkspaceId) || null;
+      }
+      const sessionKey = getSessionKey(session);
+      return APP.workspaces.find(workspace => {
+        return workspace && Array.isArray(workspace.sessions) && workspace.sessions.some(item => getSessionKey(item) === sessionKey);
+      }) || null;
+    }
+
+    function getProgressAnchorMapKey(sourceId, sessionKey, workspacePath) {
+      return [sourceId || '', workspacePath || '', sessionKey || ''].join('::');
+    }
+
+    function getProgressAnchorKeyForSession(session) {
+      if (!session) return '';
+      const workspace = getWorkspaceForSession(session);
+      return getProgressAnchorMapKey(getCurrentSourceId(), getSessionKey(session), workspace ? (workspace.cwd || '') : '');
+    }
+
+    function normalizeQuestionText(value) {
+      return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    }
+
+    function hashQuestionText(value) {
+      const text = normalizeQuestionText(value);
+      let hash = 0x811c9dc5;
+      for (let index = 0; index < text.length; index++) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
+    }
+
+    function getQuestionOffsetFromTranscript(questionKey) {
+      if (!questionKey || !transcript || typeof transcript.getBoundingClientRect !== 'function') return 0;
+      const element = findQuestionElement(questionKey);
+      if (!element || typeof element.getBoundingClientRect !== 'function') return 0;
+      const transcriptRect = transcript.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      return Math.round(elementRect.top - transcriptRect.top);
+    }
+
+    function saveProgressAnchor(anchor) {
+      if (!anchor || !anchor.sourceId || !anchor.sessionKey || !anchor.questionKey) return false;
+      const key = getProgressAnchorMapKey(anchor.sourceId, anchor.sessionKey, anchor.workspacePath || '');
+      sessionProgressAnchors.delete(key);
+      sessionProgressAnchors.set(key, anchor);
+      while (sessionProgressAnchors.size > MAX_PROGRESS_ANCHORS) {
+        const oldestKey = sessionProgressAnchors.keys().next().value;
+        sessionProgressAnchors.delete(oldestKey);
+      }
+      return true;
+    }
+
+    function getProgressAnchorForSession(session) {
+      const key = getProgressAnchorKeyForSession(session);
+      return key ? (sessionProgressAnchors.get(key) || null) : null;
+    }
+
+    function captureProgressAnchor(session) {
+      const targetSession = session || getSelectedSession();
+      if (!targetSession || !selectedQuestionKey || selectedQuestionKeyIsTemporary) return null;
+      const questions = getQuestionEvents();
+      const questionIndex = questions.findIndex(event => event.questionKey === selectedQuestionKey);
+      if (questionIndex < 0) return null;
+      const question = questions[questionIndex];
+      const workspace = getWorkspaceForSession(targetSession);
+      return {
+        sourceId: getCurrentSourceId(),
+        workspacePath: workspace ? (workspace.cwd || '') : '',
+        sessionKey: getSessionKey(targetSession),
+        questionKey: question.questionKey,
+        questionIndex,
+        questionTextHash: question.questionTextHash || hashQuestionText(question.rawText || question.summary || ''),
+        offsetFromQuestionTop: getQuestionOffsetFromTranscript(question.questionKey),
+        viewMode: viewerViewMode,
+        searchScope: viewerSearchScope,
+        searchQuery: viewerSearchQuery,
+        capturedAt: Date.now()
+      };
+    }
+
+    function saveProgressAnchorForCurrentSession() {
+      const anchor = captureProgressAnchor(getSelectedSession());
+      if (!anchor) return false;
+      const saved = saveProgressAnchor(anchor);
+      if (saved) progressRestoreToken++;
+      return saved;
+    }
+
+    function anchorMatchesCurrentSession(anchor, session) {
+      const targetSession = session || getSelectedSession();
+      if (!anchor || !targetSession) return false;
+      if (anchor.sourceId !== getCurrentSourceId()) return false;
+      if (anchor.sessionKey !== getSessionKey(targetSession)) return false;
+      const workspace = getWorkspaceForSession(targetSession);
+      if (anchor.workspacePath && workspace && workspace.cwd && anchor.workspacePath !== workspace.cwd) return false;
+      return true;
+    }
+
+    function resolveQuestionKeyFromAnchor(anchor, session) {
+      const targetSession = session || getSelectedSession();
+      if (!anchorMatchesCurrentSession(anchor, targetSession)) return null;
+      const questions = getQuestionEvents();
+      if (!questions.length) return null;
+
+      if (anchor.questionKey && questions.some(event => event.questionKey === anchor.questionKey)) {
+        return anchor.questionKey;
+      }
+
+      if (anchor.questionTextHash) {
+        const hashMatch = questions.find(event => event.questionTextHash === anchor.questionTextHash);
+        if (hashMatch) return hashMatch.questionKey;
+      }
+
+      const index = Number(anchor.questionIndex);
+      if (Number.isFinite(index) && index >= 0) {
+        if (index < questions.length) return questions[index].questionKey;
+        const previousIndex = Math.min(questions.length - 1, Math.floor(index));
+        if (previousIndex >= 0 && questions[previousIndex]) return questions[previousIndex].questionKey;
+        const nextQuestion = questions.find(Boolean);
+        if (nextQuestion) return nextQuestion.questionKey;
+      }
+
+      return null;
+    }
+
+    function restoreProgressAnchor(anchor, options) {
+      const settings = Object.assign({ behavior: 'auto' }, options || {});
+      if (settings.token && settings.token !== progressRestoreToken) return false;
+      if (!anchorMatchesCurrentSession(anchor, getSelectedSession())) return false;
+      const resolvedKey = resolveQuestionKeyFromAnchor(anchor, getSelectedSession());
+      if (!resolvedKey) return false;
+      setSelectedQuestionKey(resolvedKey, { scroll: false, persistAnchor: false });
+      let attempts = 0;
+      let stableFrames = 0;
+      const maxAttempts = 8;
+      const scroll = () => {
+        if (settings.token && settings.token !== progressRestoreToken) return;
+        if (!anchorMatchesCurrentSession(anchor, getSelectedSession())) return;
+        const scrolled = scrollToQuestion(resolvedKey, settings.behavior || 'auto');
+        attempts++;
+        const element = findQuestionElement(resolvedKey);
+        let settled = !!scrolled && !element;
+        if (scrolled && element && transcript && typeof element.getBoundingClientRect === 'function' && typeof transcript.getBoundingClientRect === 'function') {
+          const elementTop = element.getBoundingClientRect().top - transcript.getBoundingClientRect().top;
+          stableFrames = Math.abs(elementTop - 16) <= 4 ? stableFrames + 1 : 0;
+          settled = stableFrames >= 2;
+        } else if (scrolled && element) {
+          settled = true;
+        }
+        if (settled || attempts >= maxAttempts || typeof requestAnimationFrame !== 'function') {
+          focusTranscriptForQuestionNavigation();
+          return;
+        }
+        requestAnimationFrame(scroll);
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(scroll);
+      else scroll();
+      return true;
+    }
+
+    function restoreCurrentProgressAnchorIfReadable() {
+      if (viewerSearchQuery.trim()) return false;
+      const anchor = getProgressAnchorForSession(getSelectedSession());
+      if (!anchor) return false;
+      return restoreProgressAnchor(anchor, { token: progressRestoreToken, behavior: 'auto' });
+    }
+
+    function getCurrentDetailEventsWithKeys() {
+      const session = getSelectedSession();
+      return getCurrentDetailEvents().map((event, eventIndex) => {
+        if (!event || event.kind !== 'user') return event;
+        return Object.assign({}, event, {
+          questionKey: getQuestionKey(session, eventIndex),
+          questionIndex: 0,
+          questionTextHash: hashQuestionText(event.rawText || event.summary || '')
+        });
+      });
+    }
+
+    function getQuestionEvents() {
+      return getCurrentDetailEventsWithKeys().filter(event => event && event.kind === 'user').map((event, questionIndex) => {
+        return Object.assign({}, event, { questionIndex });
+      });
+    }
+
+    function syncSelectedQuestionKey(preferredPosition, options) {
+      const settings = options || {};
+      const questions = getQuestionEvents();
+      if (!questions.length) {
+        selectedQuestionKey = null;
+        selectedQuestionKeyIsTemporary = false;
+        return questions;
+      }
+
+      if (preferredPosition === 'last') {
+        selectedQuestionKey = questions[questions.length - 1].questionKey;
+        selectedQuestionKeyIsTemporary = false;
+      } else if (preferredPosition === 'first') {
+        selectedQuestionKey = questions[0].questionKey;
+        selectedQuestionKeyIsTemporary = false;
+      } else if (!selectedQuestionKey || !questions.some(event => event.questionKey === selectedQuestionKey)) {
+        const anchor = settings.useProgressAnchor ? getProgressAnchorForSession(getSelectedSession()) : null;
+        const restoredKey = anchor ? resolveQuestionKeyFromAnchor(anchor, getSelectedSession()) : null;
+        selectedQuestionKey = restoredKey || (settings.allowFallbackFirst === false ? null : questions[0].questionKey);
+        selectedQuestionKeyIsTemporary = !restoredKey && settings.temporaryFallback === true;
+      } else if (!settings.keepTemporary) {
+        selectedQuestionKeyIsTemporary = false;
+      }
+      return questions;
+    }
+
+    function eventMatchesView(event) {
+      if (viewerViewMode === 'questions') return event.kind === 'user';
+      return true;
+    }
+
+    function getSearchTerms(query) {
+      return String(query || '')
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean);
+    }
+
+    function eventMatchesSearch(event, query) {
+      const terms = getSearchTerms(query);
+      if (!terms.length) return true;
+      const haystack = [event.summary, event.rawText, event.toolName, event.status].join(' ').toLowerCase();
+      return terms.every(term => haystack.includes(term));
+    }
+
+    function highlightMatchesInElement(root, terms) {
+      const activeTerms = Array.from(new Set((terms || []).filter(Boolean)));
+      if (!root || !activeTerms.length || typeof document === 'undefined' || typeof NodeFilter === 'undefined') return;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node || !node.nodeValue) continue;
+        if (node.parentElement && node.parentElement.closest('mark,script,style')) continue;
+        textNodes.push(node);
+      }
+
+      textNodes.forEach(node => {
+        const source = node.nodeValue || '';
+        const lower = source.toLowerCase();
+        const ranges = [];
+        activeTerms.forEach(term => {
+          let index = lower.indexOf(term);
+          while (index >= 0) {
+            ranges.push({ start: index, end: index + term.length });
+            index = lower.indexOf(term, index + Math.max(1, term.length));
+          }
+        });
+        if (!ranges.length) return;
+
+        ranges.sort((a, b) => (a.start - b.start) || (b.end - b.start) - (a.end - a.start));
+        const merged = [];
+        ranges.forEach(range => {
+          const last = merged[merged.length - 1];
+          if (!last || range.start >= last.end) {
+            merged.push(range);
+          } else if (range.end > last.end) {
+            last.end = range.end;
+          }
+        });
+
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+        merged.forEach(range => {
+          if (range.start > cursor) {
+            fragment.appendChild(document.createTextNode(source.slice(cursor, range.start)));
+          }
+          const mark = document.createElement('mark');
+          mark.className = 'search-hit';
+          mark.textContent = source.slice(range.start, range.end);
+          fragment.appendChild(mark);
+          cursor = range.end;
+        });
+        if (cursor < source.length) {
+          fragment.appendChild(document.createTextNode(source.slice(cursor)));
+        }
+        if (node.parentNode) {
+          node.parentNode.replaceChild(fragment, node);
+        }
+      });
+    }
+
+    function getVisibleDetailEvents() {
+      const query = viewerSearchQuery.trim().toLowerCase();
+      const events = getCurrentDetailEventsWithKeys();
+      if (!query) return events.filter(event => eventMatchesView(event));
+      if (viewerViewMode === 'questions') {
+        return events.filter(event => eventMatchesView(event) && eventMatchesSearch(event, query));
+      }
+
+      const output = [];
+      const includedQuestions = new Set();
+      let previousQuestion = null;
+      events.forEach(event => {
+        if (!event) return;
+        if (event.kind === 'user') {
+          previousQuestion = event;
+        }
+        if (!eventMatchesView(event) || !eventMatchesSearch(event, query)) return;
+
+        if (event.kind === 'user') {
+          output.push(event);
+          if (event.questionKey) includedQuestions.add(event.questionKey);
+          return;
+        }
+
+        if (previousQuestion) {
+          const questionKey = previousQuestion.questionKey || '';
+          if (!questionKey || !includedQuestions.has(questionKey)) {
+            output.push(Object.assign({}, previousQuestion, { isSearchContext: true }));
+            if (questionKey) includedQuestions.add(questionKey);
+          }
+        }
+        output.push(event);
+      });
+      return output;
+    }
+
+    function getEventLabel(event) {
+      if (!event) return '内容';
+      if (event.kind === 'user') return '用户';
+      if (event.kind === 'assistant_commentary') return 'Assistant Commentary';
+      if (event.kind === 'assistant_final') return 'Assistant';
+      if (event.kind === 'tool') return '工具';
+      if (event.kind === 'system') return '系统';
+      return event.role || event.kind || '内容';
+    }
+
+    function getEventText(event) {
+      if (!event) return '';
+      if (event.kind === 'tool' || event.kind === 'system') {
+        return event.summary || event.rawText || '';
+      }
+      return event.rawText || event.summary || '';
+    }
+
+    function preventTitleButtonMouseFocus(event) {
+      if (!event || event.detail === 0) return;
+      event.preventDefault();
+    }
+
+    function syncSessionListSelection() {
+      const activeKey = selectedSessionKey || '';
+      sessionList.querySelectorAll('.title-group-head').forEach(button => {
+        const keys = String(button.dataset.sessionKeys || '').split('|');
+        button.classList.toggle('active', !!activeKey && keys.includes(activeKey));
+      });
+      sessionList.querySelectorAll('.session-btn').forEach(button => {
+        button.classList.toggle('active', !!activeKey && button.dataset.sessionKey === activeKey);
+      });
+    }
+
+    function renderWorkspaceList(skipViewerSync) {
+      ensureSelection();
+      const visible = getVisibleWorkspaces();
+      workspaceList.innerHTML = '';
+
+      if (!visible.length) {
+        workspaceList.innerHTML = '<div class="empty-state">' + escapeHtml(getGlobalSearchEmptyText() || getEmptySourceText() || '没有匹配的工作目录。') + '</div>';
+        renderSessionList(skipViewerSync);
+        return;
+      }
+
+      visible.forEach(item => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'workspace-btn' + (item.workspace.id === selectedWorkspaceId ? ' active' : '');
+        btn.title = item.workspace.cwd || '';
+        btn.innerHTML =
+          '<span class="workspace-name">' + escapeHtml(truncateDisplayText(item.workspace.cwd, 300)) + '</span>' +
+          '<span class="workspace-meta">当前 ' + item.workspace.activeCount + ' · 归档 ' + item.workspace.archivedCount + ' · 共 ' + item.workspace.count + ' 条</span>' +
+          '<span class="workspace-meta">最新更新：' + escapeHtml(item.workspace.latestUpdatedLocal || '') + '</span>';
+        btn.onclick = async () => {
+          saveProgressAnchorForCurrentSession();
+          selectedWorkspaceId = item.workspace.id;
+          if (!item.sessions.length) {
+            selectedSessionKey = null;
+            clearCurrentDetail();
+            renderWorkspaceList(true);
+            renderViewer();
+            return;
+          }
+          await selectSession(item.sessions[0]);
+        };
+        workspaceList.appendChild(btn);
+      });
+
+      renderSessionList(skipViewerSync);
+    }
+
+    function renderSessionList(skipViewerSync) {
+      ensureSelection();
+      const visible = getVisibleWorkspaces();
+      sessionList.innerHTML = '';
+
+      if (!selectedWorkspaceId) {
+        sessionList.innerHTML = '<div class="empty-state">' + escapeHtml(getGlobalSearchEmptyText() || '先选择一个工作目录。') + '</div>';
+        renderViewer();
+        return;
+      }
+
+      const current = visible.find(item => item.workspace.id === selectedWorkspaceId);
+      if (!current) {
+        sessionList.innerHTML = '<div class="empty-state">' + escapeHtml(getGlobalSearchEmptyText() || '当前工作目录在过滤条件下不可见。') + '</div>';
+        renderViewer();
+        return;
+      }
+
+      if (!current.sessions.length) {
+        sessionList.innerHTML = '<div class="empty-state">这个工作目录下没有匹配的聊天标题。</div>';
+        selectedSessionKey = null;
+        clearCurrentDetail();
+        renderViewer();
+        return;
+      }
+
+      groupSessionsByTitle(current.sessions).forEach(group => {
+        const groupNode = document.createElement('section');
+        groupNode.className = 'title-group';
+
+        const groupHead = document.createElement('button');
+        groupHead.type = 'button';
+        const groupActive = group.sessions.some(session => getSessionKey(session) === selectedSessionKey);
+        groupHead.className = 'title-group-head' + (groupActive ? ' active' : '');
+        groupHead.dataset.sessionKeys = group.sessions.map(item => getSessionKey(item)).join('|');
+        applyNoteMetadata(groupHead, createGroupNoteTarget(current.workspace, group), group.title);
+        groupHead.innerHTML =
+          '<span class="title-group-title">' + escapeHtml(truncateDisplayText(group.title, 300)) + '</span>' +
+          '<span class="title-group-meta">' + escapeHtml(formatTitleGroupMeta(group)) + '</span>';
+        groupHead.onmousedown = preventTitleButtonMouseFocus;
+        groupHead.onclick = async () => {
+          await selectSessionFromTitlePane(group.sessions[0]);
+        };
+        groupNode.appendChild(groupHead);
+
+        if (hasMultipleSessionBranches(group)) {
+          const sessionRows = document.createElement('div');
+          sessionRows.className = 'title-group-sessions';
+          group.sessions.forEach(session => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'session-btn' + (getSessionKey(session) === selectedSessionKey ? ' active' : '');
+            btn.dataset.sessionKey = getSessionKey(session);
+            applyNoteMetadata(btn, createSessionNoteTarget(current.workspace, group, session), session.path || session.title || '');
+            btn.innerHTML = '<span class="session-meta">' + escapeHtml(formatSessionMeta(session)) + '</span>';
+            btn.onmousedown = preventTitleButtonMouseFocus;
+            btn.onclick = async () => {
+              await selectSessionFromTitlePane(session);
+            };
+            sessionRows.appendChild(btn);
+          });
+          groupNode.appendChild(sessionRows);
+        }
+        sessionList.appendChild(groupNode);
+      });
+
+      if (skipViewerSync) {
+        renderViewer();
+        return;
+      }
+
+      const session = getSelectedSession();
+      if (session && !isDetailLoadedForSession(session)) {
+        void selectSession(session);
+        return;
+      }
+      renderViewer();
+    }
+
+    function getSelectedSession() {
+      if (!APP || !selectedWorkspaceId || !selectedSessionKey) return null;
+      const workspace = APP.workspaces.find(item => item.id === selectedWorkspaceId);
+      if (!workspace) return null;
+      return workspace.sessions.find(item => getSessionKey(item) === selectedSessionKey) || null;
+    }
+
+    async function copyText(value) {
+      const text = String(value || '');
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+      } catch (e) {
+      }
+
+      const area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      try {
+        const copied = document.execCommand('copy');
+        if (!copied) throw new Error('copy command failed');
+      } finally {
+        area.remove();
+      }
+    }
+
+    function buildResumeCommand(session) {
+      if (typeof isExternalSource === 'function' && isExternalSource()) return '';
+      if (!session || !APP) return '';
+      const cwd = getSessionCommandCwd(session);
+      if (!session.id || !cwd) return '';
+      if (isLocalClaudeSource()) {
+        return 'Set-Location -LiteralPath ' + quotePowerShellSingle(cwd) + '; claude --resume ' + quotePowerShellSingle(session.id);
+      }
+      return 'codex resume ' + session.id + ' -C ' + JSON.stringify(cwd);
+    }
+
+    function escapePowerShellDoubleQuoted(value) {
+      const psEscape = String.fromCharCode(96);
+      const dq = String.fromCharCode(34);
+      const cr = String.fromCharCode(13);
+      const lf = String.fromCharCode(10);
+      return String(value || '')
+        .split(psEscape).join(psEscape + psEscape)
+        .split(dq).join(psEscape + dq)
+        .split(cr + lf).join(psEscape + 'n')
+        .split(lf).join(psEscape + 'n')
+        .split(cr).join(psEscape + 'n');
+    }
+
+    function getCurrentSourceType() {
+      const source = typeof getCurrentSource === 'function' ? getCurrentSource() : null;
+      return source && source.type ? String(source.type) : '';
+    }
+
+    function isLocalClaudeSource() {
+      return getCurrentSourceType() === 'local-claude';
+    }
+
+    function quotePowerShellSingle(value) {
+      return "'" + String(value || '').replace(/'/g, "''") + "'";
+    }
+
+    function getSessionCommandCwd(session) {
+      const workspace = APP && APP.workspaces ? APP.workspaces.find(item => item.id === selectedWorkspaceId) : null;
+      const workspaceCwd = String((workspace && workspace.cwd) || '');
+      const sessionCwd = String((session && session.cwd) || '');
+      return isLocalClaudeSource() ? (sessionCwd || workspaceCwd) : (workspaceCwd || sessionCwd);
+    }
+
+    function buildReplyResumeCommand(session, replyText) {
+      if (typeof isExternalSource === 'function' && isExternalSource()) return '';
+      if (!session || !APP) return '';
+      const cwd = getSessionCommandCwd(session);
+      const reply = String(replyText || '');
+      if (!session.id || !cwd || !reply.trim()) return '';
+      if (isLocalClaudeSource()) {
+        return 'Set-Location -LiteralPath ' + quotePowerShellSingle(cwd) + '; claude -p --resume ' + quotePowerShellSingle(session.id) + ' ' + quotePowerShellSingle(reply);
+      }
+      return 'codex -C "' + escapePowerShellDoubleQuoted(cwd) + '" resume ' + session.id + ' "' + escapePowerShellDoubleQuoted(reply) + '"';
+    }
+
+    function canBuildReplyResumeCommand(session, replyText) {
+      if (typeof isExternalSource === 'function' && isExternalSource()) return false;
+      if (!session || !APP) return false;
+      const cwd = getSessionCommandCwd(session);
+      return !!(session.id && cwd && String(replyText || '').trim());
+    }
+
+    function getReplyDraftKey(session) {
+      return session ? getSessionKey(session) : '';
+    }
+
+    function saveReplyDraftValueOnly() {
+      if (!replyInput) return;
+      const session = getSelectedSession();
+      const key = getReplyDraftKey(session);
+      if (!key) return;
+      replyDrafts.set(key, replyInput.value || '');
+    }
+
+    function scheduleReplyComposerUpdate() {
+      if (replyComposerUpdateFrame) return;
+      const callback = () => {
+        replyComposerUpdateFrame = 0;
+        updateReplyComposerState();
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        replyComposerUpdateFrame = requestAnimationFrame(callback);
+        return;
+      }
+      replyComposerUpdateFrame = 1;
+      callback();
+    }
+
+    function persistReplyDraft() {
+      saveReplyDraftValueOnly();
+      if (replyInputIsComposing) return;
+      scheduleReplyComposerUpdate();
+    }
+
+    function resetReplyInputMetrics() {
+      replyInputMetrics = null;
+    }
+
+    function getReplyInputMetrics() {
+      if (replyInputMetrics) return replyInputMetrics;
+      const computed = typeof window !== 'undefined' && window.getComputedStyle && replyInput ? window.getComputedStyle(replyInput) : null;
+      const lineHeight = computed ? (parseFloat(computed.lineHeight) || 26) : 26;
+      const borderTop = computed ? (parseFloat(computed.borderTopWidth) || 0) : 0;
+      const borderBottom = computed ? (parseFloat(computed.borderBottomWidth) || 0) : 0;
+      const paddingTop = computed ? (parseFloat(computed.paddingTop) || 0) : 0;
+      const paddingBottom = computed ? (parseFloat(computed.paddingBottom) || 0) : 0;
+      replyInputMetrics = {
+        lineHeight,
+        maxHeight: Math.round(lineHeight * MAX_REPLY_LINES + paddingTop + paddingBottom + borderTop + borderBottom)
+      };
+      return replyInputMetrics;
+    }
+
+    function autoResizeReplyInput() {
+      if (!replyInput || !replyInput.style) return;
+      const metrics = getReplyInputMetrics();
+      replyInput.style.height = 'auto';
+      const scrollHeight = replyInput.scrollHeight || metrics.maxHeight;
+      const nextHeight = Math.min(scrollHeight, metrics.maxHeight);
+      replyInput.style.height = nextHeight + 'px';
+      replyInput.style.overflowY = scrollHeight > metrics.maxHeight ? 'auto' : 'hidden';
+    }
+
+    function updateReplyComposerState() {
+      if (!replyComposer || !replyInput) return;
+      const session = getSelectedSession();
+      if (!session || (typeof isExternalSource === 'function' && isExternalSource())) {
+        replyComposer.classList.add('hidden');
+        return;
+      }
+      replyComposer.classList.remove('hidden');
+      const text = String(replyInput.value || '');
+      const canSend = canBuildReplyResumeCommand(session, text);
+      if (copyReplyCommandButton) copyReplyCommandButton.disabled = !canSend;
+      if (clearReplyButton) clearReplyButton.disabled = !text.length;
+      autoResizeReplyInput();
+    }
+
+    function syncReplyComposer() {
+      if (!replyComposer || !replyInput) return;
+      const session = getSelectedSession();
+      if (!session || (typeof isExternalSource === 'function' && isExternalSource())) {
+        replyComposer.classList.add('hidden');
+        replyInput.value = '';
+        resetReplyInputMetrics();
+        updateReplyComposerState();
+        return;
+      }
+      const key = getReplyDraftKey(session);
+      replyInput.value = key && replyDrafts.has(key) ? (replyDrafts.get(key) || '') : '';
+      resetReplyInputMetrics();
+      updateReplyComposerState();
+    }
+
+    function clearReplyDraft() {
+      if (!replyInput) return;
+      const session = getSelectedSession();
+      const key = getReplyDraftKey(session);
+      replyInput.value = '';
+      if (key) replyDrafts.set(key, '');
+      resetReplyInputMetrics();
+      updateReplyComposerState();
+      if (typeof replyInput.focus === 'function') {
+        replyInput.focus();
+      }
+    }
+
+    async function copyReplyCommand() {
+      if (typeof isExternalSource === 'function' && isExternalSource()) {
+        showToast('外部来源不支持生成发送命令。', { tone: 'error', duration: 2400 });
+        return;
+      }
+      const session = getSelectedSession();
+      if (!session || !session.path) {
+        showToast('当前没有可发送的会话路径。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      if (!session.id) {
+        showToast('当前会话缺少 SESSION id，无法生成发送命令。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      const reply = replyInput ? String(replyInput.value || '') : '';
+      if (!reply.trim()) {
+        showToast('请输入回复内容。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      const command = buildReplyResumeCommand(session, reply);
+      if (!command) {
+        showToast(isLocalClaudeSource() ? '当前 Claude 会话缺少可恢复命令所需信息。' : '当前会话缺少发送命令所需信息。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      try {
+        await copyText(command);
+        showToast('已复制发送命令。', { duration: 2200 });
+      } catch (error) {
+        showToast('复制发送命令失败，请手动复制。', { tone: 'error', duration: 2200 });
+      }
+    }
+
+    async function copyResumeCommand() {
+      if (typeof isExternalSource === 'function' && isExternalSource()) {
+        showToast('外部来源不支持复制 SESSION。', { tone: 'error', duration: 2400 });
+        return;
+      }
+      const session = getSelectedSession();
+      if (!session) {
+        showToast('当前没有选中的会话。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      const command = buildResumeCommand(session);
+      if (!command) {
+        showToast(isLocalClaudeSource() ? '当前 Claude 会话缺少可恢复命令所需信息。' : '当前会话缺少 session id 或工作目录，无法生成命令。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      try {
+        await copyText(command);
+        showToast('已复制 SESSION：\n' + command, { duration: 2600 });
+      } catch (error) {
+        showToast('复制 SESSION 失败，请手动复制', { tone: 'error', duration: 2200 });
+      }
+    }
+
+    async function copyCurrentPath() {
+      const session = getSelectedSession();
+      if (!session || !session.path) {
+        showToast('当前没有可复制的会话路径。', { tone: 'error', duration: 2200 });
+        return;
+      }
+      try {
+        await copyText(session.path);
+        showToast('已复制路径：\n' + session.path, { duration: 2600 });
+      } catch (error) {
+        showToast('复制路径失败，请手动复制', { tone: 'error', duration: 2200 });
+      }
+    }
+
+    function sanitizeFileName(value) {
+      return String(value || 'session')
+        .replace(/[<>:"/\\|?*]+/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function buildMarkdown(detail) {
+      const lines = [];
+      lines.push('# ' + (detail.title || '未命名会话'));
+      lines.push('');
+      lines.push('- 路径：' + (detail.path || ''));
+      lines.push('- 创建：' + (detail.createdLocal || ''));
+      lines.push('- 更新：' + (detail.updatedLocal || ''));
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+
+      (detail.events || []).forEach(event => {
+        const label = event.kind === 'user' ? '用户' :
+          event.kind === 'assistant_final' ? 'Assistant' :
+          event.kind === 'assistant_commentary' ? '过程' :
+          event.kind === 'system' ? '系统' :
+          '工具';
+        lines.push('## ' + label + ' (' + (event.timestampLocal || '') + ')');
+        lines.push('');
+        if (event.kind === 'tool') {
+          if (event.summary) {
+            lines.push(event.summary);
+          }
+          if (event.rawText) {
+            if (event.summary) lines.push('');
+            lines.push(event.rawText);
+          }
+          if (!event.summary && !event.rawText) {
+            lines.push('');
+          }
+        } else {
+          lines.push(event.rawText || event.summary || '');
+          if (event.images && event.images.length) {
+            if (event.rawText || event.summary) lines.push('');
+            lines.push('[图片 ' + event.images.length + ' 张，已在网页中内联显示]');
+          }
+        }
+        lines.push('');
+      });
+
+      return lines.join('\n');
+    }
+
+    function exportSelectedMarkdown() {
+      const session = getSelectedSession();
+      if (!session) {
+        alert('当前没有选中的会话。');
+        return;
+      }
+
+      const detail = isDetailLoadedForSession(session) ? CURRENT_DETAIL : null;
+      if (!detail) {
+        alert('当前会话详情尚未加载完成，请稍后再试。');
+        return;
+      }
+
+      const stem = (detail.path || session.path || '').split(/[\\/]/).pop() || session.id || 'session';
+      const fileName = sanitizeFileName((session.title || '会话') + '__' + stem.replace(/\.jsonl$/i, '') + '.md');
+      const markdown = buildMarkdown(detail);
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    const messageCopyTexts = new Map();
+    let messageCopySerial = 0;
+    let toastTimer = null;
+
+    function showToast(message, options) {
+      const toast = document.getElementById('toast');
+      if (!toast) return;
+      if (toastTimer) clearTimeout(toastTimer);
+      const isError = !!(options && options.tone === 'error');
+      toast.textContent = message;
+      toast.hidden = false;
+      toast.className = 'toast toast--visible' + (isError ? ' toast--error' : '');
+      const duration = options && options.duration ? options.duration : 1600;
+      toastTimer = setTimeout(() => {
+        toast.className = 'toast';
+        toast.hidden = true;
+        toastTimer = null;
+      }, duration);
+    }
+
+    function resetMessageCopyTexts() {
+      messageCopyTexts.clear();
+      messageCopySerial = 0;
+      resetLazyDetailRenderers();
+    }
+
+    function registerMessageCopyText(value) {
+      const text = String(value || '');
+      if (!text) return '';
+      const id = 'message-copy-' + (++messageCopySerial);
+      messageCopyTexts.set(id, text);
+      return id;
+    }
+
+    async function copyMessageText(id) {
+      const text = messageCopyTexts.get(id);
+      if (!text) return;
+      try {
+        await copyText(text);
+        showToast('已复制全文');
+      } catch (error) {
+        showToast('复制失败，请手动复制', { tone: 'error' });
+      }
+    }
+
+    function renderCopyButton(event) {
+      const id = registerMessageCopyText(event && (event.rawText || event.summary || ''));
+      if (!id) return '';
+      return '<button type="button" class="message-copy" onclick="copyMessageText(\'' + id + '\')" title="复制全文">复制全文</button>';
+    }
+
+    let imagePreviewTrigger = null;
+
+    function openImagePreview(src, alt) {
+      if (!src) return;
+      imagePreviewTrigger = document.activeElement;
+      imagePreviewImage.src = src;
+      imagePreviewImage.alt = alt || '';
+      imagePreviewModal.hidden = false;
+      imagePreviewClose.focus();
+    }
+
+    function openImagePreviewFromButton(button) {
+      const image = button && button.querySelector ? button.querySelector('img') : null;
+      if (!image) return;
+      const attrSrc = image.getAttribute ? image.getAttribute('src') : '';
+      const src = attrSrc || image.currentSrc || image.src || '';
+      const title = button && button.getAttribute ? button.getAttribute('title') : '';
+      openImagePreview(src, image.alt || title || '');
+    }
+
+    function closeImagePreview() {
+      if (!imagePreviewModal || imagePreviewModal.hidden) return;
+      const trigger = imagePreviewTrigger;
+      imagePreviewModal.hidden = true;
+      imagePreviewImage.src = '';
+      imagePreviewImage.alt = '';
+      imagePreviewTrigger = null;
+      if (trigger && typeof trigger.focus === 'function') {
+        trigger.focus();
+      }
+    }
+
+    function renderEventImages(event) {
+      const images = event && Array.isArray(event.images) ? event.images : [];
+      if (!images.length) return '';
+      const items = images.map((image, index) => {
+        const src = String((image && image.src) || image || '');
+        if (!src) return '';
+        const escapedSrc = escapeHtml(src);
+        const label = '查看图片 ' + (index + 1);
+        return '<button type="button" class="message-image-button" onclick="openImagePreviewFromButton(this)" title="' + escapeHtml(label) + '">' +
+          '<img class="message-image-thumb" src="' + escapedSrc + '" loading="lazy" alt="' + escapeHtml(label) + '">' +
+          '</button>';
+      }).filter(Boolean).join('');
+      return items ? '<div class="message-images">' + items + '</div>' : '';
+    }
+
+    function isExplicitQuoteBlock(text) {
+      const lines = String(text || '').split('\n').map(line => line.trimEnd());
+      const meaningfulLines = lines.filter(line => line.trim());
+      return meaningfulLines.length > 0 && meaningfulLines.every(line => /^> ?/.test(line));
+    }
+
+    function detectExplicitListType(text) {
+      const meaningfulLines = String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line);
+      if (!meaningfulLines.length) return '';
+
+      if (meaningfulLines.every(line => /^- /.test(line))) return 'bullet';
+      if (meaningfulLines.every(line => /^\d+\. /.test(line))) return 'numbered';
+      return '';
+    }
+
+    function splitMarkdownTableRow(line) {
+      const trimmed = String(line || '').trim();
+      if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
+      const cells = trimmed.slice(1, -1).split('|').map(cell => cell.trim());
+      return cells.length >= 2 ? cells : null;
+    }
+
+    function getMarkdownTableAlignment(cell) {
+      if (!/^:?-{3,}:?$/.test(cell)) return false;
+      if (/^:-+:$/.test(cell)) return 'center';
+      if (/^-+:$/.test(cell)) return 'right';
+      return 'left';
+    }
+
+    function parseMarkdownTable(text) {
+      const lines = String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line);
+      if (lines.length < 3) return null;
+
+      const headers = splitMarkdownTableRow(lines[0]);
+      const separators = splitMarkdownTableRow(lines[1]);
+      if (!headers || !separators || headers.length !== separators.length || headers.some(cell => !cell)) return null;
+
+      const alignments = separators.map(getMarkdownTableAlignment);
+      if (alignments.some(alignment => alignment === false)) return null;
+
+      const rows = [];
+      for (let index = 2; index < lines.length; index++) {
+        const row = splitMarkdownTableRow(lines[index]);
+        if (!row || row.length !== headers.length) return null;
+        rows.push(row);
+      }
+
+      if (!rows.length) return null;
+      return { headers, alignments, rows };
+    }
+
+    function parseDeterministicBlocks(text) {
+      const source = String(text || '').replace(/\r\n/g, '\n');
+      const blocks = [];
+      const parts = source.split(/```/);
+
+      for (let index = 0; index < parts.length; index++) {
+        if (index % 2 === 1) {
+          const lines = parts[index].split('\n');
+          const language = (lines.shift() || '').trim();
+          blocks.push({ type: 'code', language, text: lines.join('\n').trimEnd() });
+          continue;
+        }
+
+        parts[index].split(/\n{2,}/).forEach(chunk => {
+          const value = chunk.trim();
+          if (!value) return;
+          const table = parseMarkdownTable(value);
+          if (table) blocks.push(Object.assign({ type: 'table' }, table));
+          else if (isExplicitQuoteBlock(value)) blocks.push({ type: 'quote', text: value.replace(/^> ?/gm, '') });
+          else if (detectExplicitListType(value)) blocks.push({ type: 'list', text: value });
+          else blocks.push({ type: 'paragraph', text: value });
+        });
+      }
+
+      return blocks;
+    }
+
+    function renderStrongTextSegment(segment) {
+      const source = String(segment || '');
+      let output = '';
+      let index = 0;
+      while (index < source.length) {
+        const open = source.indexOf('**', index);
+        if (open < 0) {
+          output += escapeHtml(source.slice(index));
+          break;
+        }
+        const close = source.indexOf('**', open + 2);
+        const newline = source.indexOf('\n', open + 2);
+        if (close < 0 || (newline >= 0 && newline < close)) {
+          output += escapeHtml(source.slice(index));
+          break;
+        }
+        const content = source.slice(open + 2, close);
+        if (!content) {
+          output += escapeHtml(source.slice(index, close + 2));
+          index = close + 2;
+          continue;
+        }
+        output += escapeHtml(source.slice(index, open));
+        output += '<strong>' + escapeHtml(content) + '</strong>';
+        index = close + 2;
+      }
+      return output;
+    }
+
+    function renderInlineText(text) {
+      return String(text || '').split(/(`[^`\n]+`)/g).map(segment => {
+        if (/^`[^`\n]+`$/.test(segment)) {
+          return '<code>' + escapeHtml(segment.slice(1, -1)) + '</code>';
+        }
+        return renderStrongTextSegment(segment);
+      }).join('');
+    }
+
+    function renderListBlock(text) {
+      const listType = detectExplicitListType(text);
+      if (!listType) return '<div class="message-body">' + escapeHtml(text) + '</div>';
+
+      const tagName = listType === 'numbered' ? 'ol' : 'ul';
+      const itemPattern = listType === 'numbered' ? /^\d+\. / : /^- /;
+      const items = String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line)
+        .map(line => line.replace(itemPattern, ''));
+
+      return '<' + tagName + ' class="message-list">' + items.map(item => '<li>' + renderInlineText(item) + '</li>').join('') + '</' + tagName + '>';
+    }
+
+    function renderTableCell(tagName, value, alignment) {
+      const className = alignment === 'center' || alignment === 'right' ? ' class="align-' + alignment + '"' : '';
+      return '<' + tagName + className + '>' + renderInlineText(value) + '</' + tagName + '>';
+    }
+
+    function renderTableBlock(block) {
+      const headerHtml = '<tr>' + block.headers.map((cell, index) => renderTableCell('th', cell, block.alignments[index])).join('') + '</tr>';
+      const rowsHtml = block.rows.map(row => {
+        return '<tr>' + row.map((cell, index) => renderTableCell('td', cell, block.alignments[index])).join('') + '</tr>';
+      }).join('');
+      return '<div class="message-table-wrap"><table class="message-table"><thead>' + headerHtml + '</thead><tbody>' + rowsHtml + '</tbody></table></div>';
+    }
+
+    function renderDeterministicMarkdown(text) {
+      const blocks = parseDeterministicBlocks(text || '');
+      return blocks.map(block => {
+        if (block.type === 'code') return '<pre class="code-block"><code>' + escapeHtml(block.text) + '</code></pre>';
+        if (block.type === 'quote') return '<blockquote>' + renderInlineText(block.text) + '</blockquote>';
+        if (block.type === 'list') return renderListBlock(block.text);
+        if (block.type === 'table') return renderTableBlock(block);
+        return '<p class="message-body">' + renderInlineText(block.text) + '</p>';
+      }).join('');
+    }
+
+    const lazyDetailRenderers = new Map();
+    let lazyDetailSerial = 0;
+
+    function resetLazyDetailRenderers() {
+      lazyDetailRenderers.clear();
+      lazyDetailSerial = 0;
+    }
+
+    function renderToolRawBlock(text) {
+      const content = String(text || '');
+      if (!content) return '';
+      return '<pre class="code-block"><code>' + escapeHtml(content) + '</code></pre>';
+    }
+
+    function renderLazyDetails(className, summaryHtml, bodyRenderer, options) {
+      const id = 'lazy-detail-' + (++lazyDetailSerial);
+      lazyDetailRenderers.set(id, bodyRenderer);
+      const shouldOpen = !!(options && options.autoExpandGroups);
+      return '<details class="' + className + '"' + (shouldOpen ? ' open' : '') + '><summary>' + summaryHtml + '</summary><div class="message-blocks" data-lazy-detail-id="' + id + '" data-lazy-detail-body></div></details>';
+    }
+
+    function renderProcessDetailItem(item) {
+      if (!item) return '';
+      if (item.kind === 'assistant_commentary') {
+        return '<div class="message message--commentary"><div class="message-head"><span class="role">过程</span><span>' + escapeHtml(item.timestampLocal || '') + '</span></div><div class="message-blocks">' + renderDeterministicMarkdown(item.rawText || '') + '</div></div>';
+      }
+      if (item.kind === 'system') {
+        return '<div class="message message--tool"><div class="message-head"><span class="role">系统</span><span>' + escapeHtml(item.timestampLocal || '') + '</span></div><div class="message-blocks">' + renderDeterministicMarkdown(item.rawText || item.summary || '') + '</div></div>';
+      }
+      return '<div class="message message--tool"><div class="message-head"><span class="role">' + escapeHtml(item.toolName || 'tool') + '</span><span>' + escapeHtml(item.status || '') + '</span></div><div class="message-blocks">' + (item.summary ? '<p class="message-body">' + renderInlineText(item.summary) + '</p>' : '') + renderToolRawBlock(item.rawText || '') + '</div></div>';
+    }
+
+    function summarizeProcessItems(items, options) {
+      const summaryCounts = {
+        process: 0,
+        tool: 0,
+        system: 0
+      };
+      const query = options && options.searchQuery ? String(options.searchQuery).trim().toLowerCase() : '';
+
+      items.forEach(item => {
+        if (!item) return;
+        if (item.kind === 'assistant_commentary') summaryCounts.process++;
+        else if (item.kind === 'system') summaryCounts.system++;
+        else summaryCounts.tool++;
+      });
+
+      const summaryParts = ['执行过程', items.length + ' 条'];
+      if (summaryCounts.process) summaryParts.push('过程 ' + summaryCounts.process);
+      if (summaryCounts.tool) summaryParts.push('工具 ' + summaryCounts.tool);
+      if (summaryCounts.system) summaryParts.push('系统 ' + summaryCounts.system);
+      if (query) summaryParts.push('命中 ' + items.length);
+      return '执行过程（' + summaryParts.slice(1).join(' · ') + '）';
+    }
+
+    function renderEvent(event, options) {
+      const copyButton = renderCopyButton(event);
+      if (event.kind === 'user') {
+        const questionKey = (options && options.questionKey) || event.questionKey || '';
+        const dataAttrs = questionKey ? ' data-question-key="' + escapeHtml(questionKey) + '" tabindex="0"' : '';
+        const activeClass = options && options.isCurrentQuestion ? ' is-current-question' : '';
+        const contextLabel = event.isSearchContext ? '<span class="context-label">上下文提问</span>' : '';
+        return '<article class="message user message-question' + activeClass + '"' + dataAttrs + '><div class="message-head"><span class="message-head-main"><span class="role">用户</span>' + contextLabel + '<span>' + escapeHtml(event.timestampLocal || '') + '</span></span>' + copyButton + '</div><div class="message-blocks">' + renderDeterministicMarkdown(event.rawText || '') + renderEventImages(event) + '</div></article>';
+      }
+
+      if (event.kind === 'assistant_final') {
+        return '<article class="message message--final assistant"><div class="message-head"><span class="message-head-main"><span class="role">Assistant</span><span>' + escapeHtml(event.timestampLocal || '') + '</span></span>' + copyButton + '</div><div class="message-blocks">' + renderDeterministicMarkdown(event.rawText || '') + '</div></article>';
+      }
+
+      return '';
+    }
+
+    function renderCollapsedProcessItems(items, options) {
+      if (!items.length) return '';
+      const summaryHtml = summarizeProcessItems(items, options);
+      return renderLazyDetails('collapsed-group', summaryHtml, () => items.map(item => renderProcessDetailItem(item)).join(''), options);
+    }
+
+    function hydrateLazyDetail(details) {
+      if (!details || !details.querySelector) return;
+      const body = details.querySelector('[data-lazy-detail-body]');
+      if (!body) return;
+      const rendererId = body.getAttribute('data-lazy-detail-id');
+      const renderer = rendererId ? lazyDetailRenderers.get(rendererId) : null;
+      if (details.open) {
+        if (body.dataset.rendered !== '1') {
+          body.innerHTML = renderer ? renderer() : '';
+          body.dataset.rendered = '1';
+          highlightMatchesInElement(body, getSearchTerms(viewerSearchQuery));
+        }
+        return;
+      }
+      body.innerHTML = '';
+      delete body.dataset.rendered;
+    }
+
+    function hydrateOpenLazyDetails(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll('details[open]').forEach(hydrateLazyDetail);
+    }
+
+    function renderReaderToolbarActions(session) {
+      let sessionButton = '';
+      if (typeof isExternalSource === 'function' && isExternalSource()) {
+        sessionButton = '<button type="button" disabled title="外部来源不支持复制 SESSION">SESSION</button>';
+      } else if (!buildResumeCommand(session)) {
+        const title = isLocalClaudeSource() ? '当前 Claude 会话缺少可恢复命令所需信息' : '当前会话缺少 session id 或工作目录';
+        sessionButton = '<button type="button" disabled title="' + escapeHtml(title) + '">SESSION</button>';
+      } else {
+        const title = isLocalClaudeSource() ? '复制 claude --resume 命令' : '复制 codex resume 命令';
+        sessionButton = '<button type="button" onclick="copyResumeCommand()" title="' + escapeHtml(title) + '">SESSION</button>';
+      }
+      return '<button type="button" onclick="copyCurrentPath()" title="复制当前会话路径">路径</button>' +
+        '<button type="button" onclick="exportSelectedMarkdown()">导出 MD</button>' +
+        sessionButton +
+        '<button type="button" id="refreshCurrentButton" class="quick-refresh-btn" onclick="refreshCurrentSession()" title="只重新读取当前会话">快刷</button>' +
+      '';
+    }
+
+    function updateQuestionNavState() {
+      const questions = getNavigableQuestionKeys();
+      const disabled = !questions.length;
+      if (questionNextButton) questionNextButton.disabled = disabled;
+    }
+
+    function getNavigableQuestionKeys() {
+      if (getSearchTerms(viewerSearchQuery).length && transcript && typeof transcript.querySelectorAll === 'function') {
+        const keys = [];
+        transcript.querySelectorAll('[data-question-key]').forEach(node => {
+          const key = node && node.dataset ? node.dataset.questionKey : '';
+          if (key && !keys.includes(key)) keys.push(key);
+        });
+        return keys;
+      }
+      return getQuestionEvents().map(event => event.questionKey).filter(Boolean);
+    }
+
+    function findQuestionElement(questionKey) {
+      if (!questionKey || !transcript) return null;
+      return Array.from(transcript.querySelectorAll('[data-question-key]')).find(node => node.dataset.questionKey === questionKey) || null;
+    }
+
+    let activeQuestionScrollAnimation = 0;
+    let activeQuestionScrollToken = 0;
+    let transcriptLayoutLockTimer = 0;
+
+    function cancelQuestionScrollAnimation() {
+      if (!activeQuestionScrollAnimation) return;
+      cancelAnimationFrame(activeQuestionScrollAnimation);
+      activeQuestionScrollAnimation = 0;
+    }
+
+    function lockTranscriptLayoutForProgrammaticScroll() {
+      if (!transcript || !transcript.classList) return;
+      transcript.classList.add('is-programmatic-scroll');
+      if (transcriptLayoutLockTimer) clearTimeout(transcriptLayoutLockTimer);
+      transcriptLayoutLockTimer = setTimeout(() => {
+        transcript.classList.remove('is-programmatic-scroll');
+        transcriptLayoutLockTimer = 0;
+      }, 1200);
+    }
+
+    function unlockTranscriptLayoutForProgrammaticScroll() {
+      if (transcriptLayoutLockTimer) {
+        clearTimeout(transcriptLayoutLockTimer);
+        transcriptLayoutLockTimer = 0;
+      }
+      if (transcript && transcript.classList) {
+        transcript.classList.remove('is-programmatic-scroll');
+      }
+    }
+
+    function calculateQuestionScrollSpacer(element) {
+      if (!transcript || !element) return 0;
+      const remainingBelow = Math.max(0, transcript.scrollHeight - (element.offsetTop + element.offsetHeight));
+      const requiredBelow = Math.max(0, transcript.clientHeight - element.offsetHeight - 32);
+      return Math.max(0, requiredBelow - remainingBelow + 32);
+    }
+
+    function scrollTranscriptTo(top, behavior, fallbackElement, options) {
+      cancelQuestionScrollAnimation();
+      const token = ++activeQuestionScrollToken;
+      const targetTop = Math.max(0, top);
+      if (!transcript || typeof transcript.scrollTo !== 'function') {
+        if (fallbackElement && typeof fallbackElement.scrollIntoView === 'function') {
+          fallbackElement.scrollIntoView({
+            block: 'start',
+            behavior: behavior || 'auto'
+          });
+        }
+        return;
+      }
+      if (options && options.lockLayout) lockTranscriptLayoutForProgrammaticScroll();
+      if ((behavior || 'auto') !== 'smooth' || typeof requestAnimationFrame !== 'function') {
+        transcript.scrollTo({
+          top: targetTop,
+          behavior: behavior || 'auto'
+        });
+        if (!(options && options.keepLayoutLocked)) unlockTranscriptLayoutForProgrammaticScroll();
+        return;
+      }
+
+      const startTop = transcript.scrollTop || 0;
+      const distance = targetTop - startTop;
+      const startedAt = performance.now();
+      const duration = 220;
+      const step = now => {
+        if (token !== activeQuestionScrollToken) return;
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        transcript.scrollTop = startTop + distance * eased;
+        if (progress < 1) {
+          activeQuestionScrollAnimation = requestAnimationFrame(step);
+        } else {
+          activeQuestionScrollAnimation = 0;
+          if (!(options && options.keepLayoutLocked)) unlockTranscriptLayoutForProgrammaticScroll();
+        }
+      };
+      activeQuestionScrollAnimation = requestAnimationFrame(step);
+    }
+
+    function convergeScrollToQuestion(questionKey, behavior) {
+      const token = ++activeQuestionScrollToken;
+      lockTranscriptLayoutForProgrammaticScroll();
+      let stableFrames = 0;
+      let attempts = 0;
+      const maxAttempts = 36;
+      const settleUnlockedQuestion = () => {
+        let unlockedStableFrames = 0;
+        let unlockedAttempts = 0;
+        const maxUnlockedAttempts = 36;
+        const settle = () => {
+          if (token !== activeQuestionScrollToken) return;
+          const element = findQuestionElement(questionKey);
+          if (!element || !transcript) return;
+          if (transcript.style) {
+            const spacer = calculateQuestionScrollSpacer(element);
+            transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+          }
+          let targetTop = element.offsetTop - 16;
+          if (typeof transcript.getBoundingClientRect === 'function' && typeof element.getBoundingClientRect === 'function') {
+            const transcriptRect = transcript.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+            targetTop = (transcript.scrollTop || 0) + (elementRect.top - transcriptRect.top) - 16;
+          }
+          const nextTop = Math.max(0, targetTop);
+          transcript.scrollTo({ top: nextTop, behavior: 'auto' });
+          const elementTop = typeof element.getBoundingClientRect === 'function' && typeof transcript.getBoundingClientRect === 'function'
+            ? element.getBoundingClientRect().top - transcript.getBoundingClientRect().top
+            : 16;
+          unlockedStableFrames = Math.abs(elementTop - 16) <= 3 ? unlockedStableFrames + 1 : 0;
+          unlockedAttempts++;
+          if (unlockedStableFrames >= 3 || unlockedAttempts >= maxUnlockedAttempts) return;
+          requestAnimationFrame(settle);
+        };
+        requestAnimationFrame(settle);
+      };
+      const settle = () => {
+        if (token !== activeQuestionScrollToken) return;
+        const element = findQuestionElement(questionKey);
+        if (!element || !transcript) {
+          unlockTranscriptLayoutForProgrammaticScroll();
+          return;
+        }
+        if (transcript.style) {
+          const spacer = calculateQuestionScrollSpacer(element);
+          transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+        }
+        let targetTop = element.offsetTop - 16;
+        if (typeof transcript.getBoundingClientRect === 'function' && typeof element.getBoundingClientRect === 'function') {
+          const transcriptRect = transcript.getBoundingClientRect();
+          const elementRect = element.getBoundingClientRect();
+          targetTop = (transcript.scrollTop || 0) + (elementRect.top - transcriptRect.top) - 16;
+        }
+        const nextTop = Math.max(0, targetTop);
+        transcript.scrollTo({ top: nextTop, behavior: 'auto' });
+        const delta = Math.abs((transcript.scrollTop || 0) - nextTop);
+        stableFrames = delta < 2 ? stableFrames + 1 : 0;
+        attempts++;
+        if (stableFrames >= 3 || attempts >= maxAttempts) {
+          unlockTranscriptLayoutForProgrammaticScroll();
+          settleUnlockedQuestion();
+          return;
+        }
+        requestAnimationFrame(settle);
+      };
+      requestAnimationFrame(settle);
+    }
+
+    function scrollToQuestion(questionKey, behavior) {
+      const element = findQuestionElement(questionKey);
+      if (!element) return false;
+      if (transcript && transcript.style) {
+        const spacer = calculateQuestionScrollSpacer(element);
+        transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+      }
+      let targetTop = element.offsetTop - 16;
+      if (transcript && typeof transcript.getBoundingClientRect === 'function' && typeof element.getBoundingClientRect === 'function') {
+        const transcriptRect = transcript.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        targetTop = (transcript.scrollTop || 0) + (elementRect.top - transcriptRect.top) - 16;
+      }
+      if (behavior === 'smooth') {
+        convergeScrollToQuestion(questionKey, behavior);
+      } else {
+        scrollTranscriptTo(targetTop, behavior === 'keyboard' ? 'auto' : (behavior || 'auto'), element);
+      }
+      return true;
+    }
+
+    function highlightCurrentQuestion() {
+      if (!transcript) return;
+      transcript.querySelectorAll('[data-question-key]').forEach(node => {
+        node.classList.toggle('is-current-question', !!selectedQuestionKey && node.dataset.questionKey === selectedQuestionKey);
+      });
+      updateQuestionNavState();
+    }
+
+    function setSelectedQuestionKey(questionKey, options) {
+      const settings = options || {};
+      selectedQuestionKey = questionKey || null;
+      selectedQuestionKeyIsTemporary = !!settings.temporary;
+      highlightCurrentQuestion();
+      if (selectedQuestionKey && settings.persistAnchor !== false && typeof saveProgressAnchorForCurrentSession === 'function') {
+        saveProgressAnchorForCurrentSession();
+      }
+      if (settings && settings.scroll) {
+        const behavior = settings.behavior || 'smooth';
+        if (behavior === 'keyboard') {
+          scrollToQuestion(selectedQuestionKey, behavior);
+        } else {
+          requestAnimationFrame(() => scrollToQuestion(selectedQuestionKey, behavior));
+        }
+      }
+    }
+
+    function focusFirstQuestion(options) {
+      const questions = syncSelectedQuestionKey('first');
+      if (!questions.length) return false;
+      setSelectedQuestionKey(questions[0].questionKey, options || { scroll: false });
+      return true;
+    }
+
+    function focusLastQuestion(options) {
+      const questions = syncSelectedQuestionKey('last');
+      if (!questions.length) return false;
+      setSelectedQuestionKey(questions[questions.length - 1].questionKey, options || { scroll: false });
+      return true;
+    }
+
+    function jumpQuestion(direction) {
+      const questions = getNavigableQuestionKeys();
+      if (!questions.length) return;
+      let index = questions.indexOf(selectedQuestionKey);
+      if (index < 0) index = direction > 0 ? -1 : questions.length;
+      const nextIndex = Math.max(0, Math.min(questions.length - 1, index + direction));
+      const nextQuestionKey = questions[nextIndex];
+      if (!nextQuestionKey) return;
+      setSelectedQuestionKey(nextQuestionKey, { scroll: true, behavior: 'keyboard' });
+    }
+
+    function handleQuestionSelectionFromRender() {
+      const questions = syncSelectedQuestionKey(null, { useProgressAnchor: true });
+      if (!questions.length) return;
+      highlightCurrentQuestion();
+    }
+
+    function syncViewerToolbar(session) {
+      if (!session) {
+        viewerToolbar.classList.add('hidden');
+        viewerToolbarActions.innerHTML = '';
+        if (replyComposer) replyComposer.classList.add('hidden');
+        return;
+      }
+
+      viewerToolbar.classList.remove('hidden');
+      viewerToolbarActions.innerHTML = renderReaderToolbarActions(session);
+      if (document.activeElement !== viewerSearchInput && viewerSearchInput.value !== viewerSearchQuery) {
+        viewerSearchInput.value = viewerSearchQuery;
+      }
+      viewerToolbar.querySelectorAll('button[data-view-mode]').forEach(button => {
+        button.classList.toggle('active', button.dataset.viewMode === viewerViewMode);
+      });
+      viewerToolbar.querySelectorAll('button[data-search-scope]').forEach(button => {
+        button.classList.toggle('active', button.dataset.searchScope === viewerSearchScope);
+      });
+      updateQuestionNavState();
+      syncReplyComposer();
+    }
+
+    function buildReaderMarkup(events, options) {
+      resetMessageCopyTexts();
+      const output = [];
+      let processItems = [];
+      const selectedKey = options && options.selectedQuestionKey ? options.selectedQuestionKey : '';
+
+      function flushProcessItems() {
+        if (!processItems.length) return;
+        output.push(renderCollapsedProcessItems(processItems, options));
+        processItems = [];
+      }
+
+      events.forEach(event => {
+        if (!event) return;
+
+        if (['assistant_commentary', 'tool', 'system'].includes(event.kind)) {
+          processItems.push(event);
+          return;
+        }
+
+        if (event.kind === 'user') {
+          flushProcessItems();
+          output.push(renderEvent(event, {
+            questionKey: event.questionKey || '',
+            isCurrentQuestion: !!event.questionKey && event.questionKey === selectedKey
+          }));
+          return;
+        }
+
+        if (event.kind === 'assistant_final') {
+          flushProcessItems();
+          output.push(renderEvent(event));
+        }
+      });
+
+      flushProcessItems();
+      return output.join('');
+    }
+
+    function renderViewer() {
+      const session = getSelectedSession();
+      if (!session) {
+        resetMessageCopyTexts();
+        const searchMessage = getGlobalSearchEmptyText() || getEmptySourceText();
+        viewerHead.innerHTML = getGlobalSearchQuery()
+          ? '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>'
+          : '<div class="empty-state">' + escapeHtml(searchMessage || '左侧选中一个标题后，这里会显示完整聊天内容。') + '</div>';
+        syncViewerToolbar(null);
+        transcript.innerHTML = getGlobalSearchQuery()
+          ? '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>'
+          : '';
+        selectedQuestionKey = null;
+        selectedQuestionKeyIsTemporary = false;
+        return;
+      }
+
+      if (getGlobalSearchQuery() && !sessionMatchesGlobalSearch(session)) {
+        const searchMessage = getGlobalSearchEmptyText();
+        resetMessageCopyTexts();
+        syncViewerToolbar(session);
+        transcript.innerHTML = '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>';
+        highlightCurrentQuestion();
+        return;
+      }
+
+      const tags = [];
+      if (session.archived) tags.push('归档');
+      else tags.push('当前');
+      if (session.hasImageReference) tags.push('含图片引用');
+      if (session.modelProvider) tags.push('provider: ' + session.modelProvider);
+      if (session.source) tags.push('source: ' + session.source);
+
+      viewerHead.innerHTML =
+        '<div class="viewer-head-row">' +
+          '<p class="viewer-meta">创建：' + escapeHtml(session.createdLocal) + ' · 用户 ' + session.userCount + ' · 回答 ' + session.assistantCount + '</p>' +
+          '<div class="viewer-tags">' + tags.map(tag => '<span class="stat">' + escapeHtml(tag) + '</span>').join(' ') + '</div>' +
+        '</div>' +
+        '<p class="viewer-path">' + escapeHtml(session.path) + '</p>';
+      syncViewerToolbar(session);
+
+      if (!isDetailLoadedForSession(session)) {
+        transcript.innerHTML = '<div class="empty-state">正在加载会话详情...</div>';
+        return;
+      }
+
+      const query = viewerSearchQuery.trim().toLowerCase();
+      const events = getVisibleDetailEvents();
+      const questionFocus = pendingQuestionFocus;
+      pendingQuestionFocus = null;
+      if (query) {
+        const visibleQuestionKeys = [];
+        events.forEach(event => {
+          if (event && event.kind === 'user' && event.questionKey && !visibleQuestionKeys.includes(event.questionKey)) {
+            visibleQuestionKeys.push(event.questionKey);
+          }
+        });
+        if (!visibleQuestionKeys.includes(selectedQuestionKey)) {
+          selectedQuestionKey = visibleQuestionKeys[0] || null;
+          selectedQuestionKeyIsTemporary = !!selectedQuestionKey;
+        }
+      } else {
+        syncSelectedQuestionKey(questionFocus, { useProgressAnchor: !questionFocus });
+      }
+      if (!events.length) {
+        resetMessageCopyTexts();
+        const searchMessage = getGlobalSearchEmptyText();
+        transcript.innerHTML = query
+          ? '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>'
+          : '<div class="empty-state">这条会话没有匹配当前视图的内容。</div>';
+        if (query) selectedQuestionKeyIsTemporary = !!selectedQuestionKey;
+        highlightCurrentQuestion();
+        return;
+      }
+
+        transcript.innerHTML = buildReaderMarkup(events, {
+          autoExpandGroups: false,
+          searchQuery: query,
+          selectedQuestionKey: selectedQuestionKey
+        });
+        hydrateOpenLazyDetails(transcript);
+        highlightMatchesInElement(transcript, getSearchTerms(viewerSearchQuery));
+        highlightCurrentQuestion();
+        if (selectedQuestionKey && (questionFocus || viewerViewMode === 'all')) {
+          requestAnimationFrame(() => scrollToQuestion(selectedQuestionKey, 'auto'));
+        }
+      updateReplyComposerState();
+    }
+
+    async function selectSessionFromTitlePane(session) {
+      syncSessionListSelection();
+      await selectSession(session, { syncLists: false });
+    }
+
+    async function selectSession(session, options) {
+      const settings = Object.assign({ syncLists: true }, options || {});
+      const key = getSessionKey(session);
+      const isDifferentSession = !isDetailLoadedForSession(session);
+      if (isDifferentSession) saveProgressAnchorForCurrentSession();
+      const targetAnchor = getProgressAnchorForSession(session);
+      const selectRestoreToken = ++progressRestoreToken;
+      selectedSessionKey = key;
+      if (isDifferentSession) {
+        clearCurrentDetail();
+      }
+      if (settings.syncLists) {
+        renderWorkspaceList(true);
+      } else {
+        syncSessionListSelection();
+      }
+      transcript.innerHTML = '<div class="empty-state">正在加载会话详情...</div>';
+      try {
+          const detail = await loadSessionDetail(session);
+          if (!applyLoadedDetail(session, detail)) return;
+          pendingQuestionFocus = targetAnchor ? null : 'last';
+          renderViewer();
+          if (targetAnchor) {
+            restoreProgressAnchor(targetAnchor, { token: selectRestoreToken, behavior: 'auto' });
+          } else {
+            requestAnimationFrame(() => focusTranscriptForQuestionNavigation());
+          }
+        } catch (error) {
+        if (selectedSessionKey !== key) return;
+        viewerHead.innerHTML = '<div class="empty-state">会话详情加载失败。</div>';
+        transcript.innerHTML = '<div class="empty-state">' + escapeHtml(error.message || '未知错误') + '</div>';
+      }
+    }
+
+    if (sourceSelect) {
+      sourceSelect.addEventListener('change', event => {
+        void switchSource(event.target.value || 'local-codex');
+      });
+    }
+    Object.keys(collapseButtons).forEach(key => {
+      const button = collapseButtons[key];
+      if (!button) return;
+      button.addEventListener('click', () => setPaneCollapsed(key, true));
+    });
+    Object.keys(expandButtons).forEach(key => {
+      const button = expandButtons[key];
+      if (!button) return;
+      button.addEventListener('click', () => setPaneCollapsed(key, false));
+    });
+    if (globalSidebarToggleButton) {
+      globalSidebarToggleButton.addEventListener('click', toggleAllSidebars);
+    }
+    workspaceFilterInput.addEventListener('input', () => {
+      renderWorkspaceList();
+    });
+    sessionFilterInput.addEventListener('input', () => {
+      renderSessionList();
+    });
+    sessionList.addEventListener('contextmenu', event => {
+      const item = event.target && event.target.closest('.title-group-head, .session-btn');
+      if (!item) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openNoteMenu(event, noteTargetFromElement(item));
+    });
+    sessionList.addEventListener('mouseover', event => {
+      const item = event.target && event.target.closest('.title-group-head.has-note, .session-btn.has-note');
+      if (!item || !sessionList.contains(item)) return;
+      showNoteTooltip(event, noteTargetFromElement(item));
+    });
+    sessionList.addEventListener('mousemove', event => {
+      const item = event.target && event.target.closest('.title-group-head.has-note, .session-btn.has-note');
+      if (!item) return;
+      moveNoteTooltip(event);
+    });
+    sessionList.addEventListener('mouseout', event => {
+      const item = event.target && event.target.closest('.title-group-head.has-note, .session-btn.has-note');
+      if (!item) return;
+      if (event.relatedTarget && item.contains(event.relatedTarget)) return;
+      hideNoteTooltip();
+    });
+    viewerSearchInput.addEventListener('input', () => {
+      viewerSearchQuery = viewerSearchInput.value || '';
+      if (viewerSearchInputIsComposing) return;
+      if (!viewerSearchQuery.trim() && currentScopeSearchTimer) {
+        clearTimeout(currentScopeSearchTimer);
+        currentScopeSearchTimer = 0;
+        resetGlobalSearchStateForCurrentScope();
+        renderViewer();
+        restoreCurrentProgressAnchorIfReadable();
+        return;
+      }
+      scheduleViewerSearch();
+    });
+    viewerSearchInput.addEventListener('compositionstart', () => {
+      viewerSearchInputIsComposing = true;
+    });
+    viewerSearchInput.addEventListener('compositionend', () => {
+      viewerSearchInputIsComposing = false;
+      viewerSearchQuery = viewerSearchInput.value || '';
+      if (!viewerSearchQuery.trim() && currentScopeSearchTimer) {
+        clearTimeout(currentScopeSearchTimer);
+        currentScopeSearchTimer = 0;
+        resetGlobalSearchStateForCurrentScope();
+        renderViewer();
+        restoreCurrentProgressAnchorIfReadable();
+        return;
+      }
+      scheduleViewerSearch();
+    });
+    if (replyInput) {
+      replyInput.addEventListener('input', () => {
+        persistReplyDraft();
+      });
+      replyInput.addEventListener('compositionstart', () => {
+        replyInputIsComposing = true;
+      });
+      replyInput.addEventListener('compositionend', () => {
+        replyInputIsComposing = false;
+        saveReplyDraftValueOnly();
+        scheduleReplyComposerUpdate();
+      });
+      replyInput.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        if (replyInputIsComposing || event.isComposing) return;
+        if (event.shiftKey) return;
+        event.preventDefault();
+        void copyReplyCommand();
+      });
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('resize', () => {
+        resetReplyInputMetrics();
+        scheduleReplyComposerUpdate();
+      });
+    }
+    viewerToolbar.addEventListener('click', event => {
+      const navButton = event.target.closest('button[data-question-nav]');
+      if (navButton) {
+        if (navButton.dataset.questionNav === 'bottom') {
+          scrollTranscriptBottom();
+        }
+        return;
+      }
+      const scopeButton = event.target.closest('button[data-search-scope]');
+      if (scopeButton) {
+        const previousScope = viewerSearchScope;
+        viewerSearchScope = scopeButton.dataset.searchScope || 'all';
+        if (viewerSearchScope === 'current') {
+          resetGlobalSearchStateForCurrentScope();
+          if (previousScope !== 'current') renderWorkspaceList(true);
+          renderViewer();
+          restoreCurrentProgressAnchorIfReadable();
+          return;
+        }
+        if (currentScopeSearchTimer) {
+          clearTimeout(currentScopeSearchTimer);
+          currentScopeSearchTimer = 0;
+        }
+        scheduleGlobalSearch();
+        return;
+      }
+      const button = event.target.closest('button[data-view-mode]');
+      if (!button) return;
+      const previousMode = viewerViewMode;
+      viewerViewMode = button.dataset.viewMode || 'all';
+      renderViewer();
+      if (restoreCurrentProgressAnchorIfReadable()) return;
+      if (previousMode === 'questions' && viewerViewMode === 'all' && selectedQuestionKey) {
+        requestAnimationFrame(() => scrollToQuestion(selectedQuestionKey, 'auto'));
+      }
+    });
+    transcript.addEventListener('click', event => {
+      if (event.target && event.target.closest('button, a, input, textarea, select')) return;
+      transcript.focus({ preventScroll: true });
+      const question = event.target.closest('[data-question-key]');
+      if (!question) return;
+      setSelectedQuestionKey(question.dataset.questionKey, { scroll: false });
+    });
+    transcript.addEventListener('toggle', event => {
+      if (!event.target || event.target.tagName !== 'DETAILS') return;
+      hydrateLazyDetail(event.target);
+    }, true);
+    document.addEventListener('keydown', event => {
+      const active = document.activeElement;
+      if (active !== transcript && !transcript.contains(active)) return;
+      if (event.target && event.target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key && event.key.toLowerCase() === 'k') {
+        if (runRefreshRequest._running) return;
+        event.preventDefault();
+        void refreshCurrentSession();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        jumpQuestion(-1);
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        jumpQuestion(1);
+      }
+    });
+    workspaceProviderFilter.addEventListener('change', event => {
+      if (event.target && event.target.matches('input[type="checkbox"][data-filter-key="provider"]')) {
+        toggleFilterValue('provider', event.target.dataset.value);
+      }
+    });
+    workspaceSourceFilter.addEventListener('change', event => {
+      if (event.target && event.target.matches('input[type="checkbox"][data-filter-key="source"]')) {
+        toggleFilterValue('source', event.target.dataset.value);
+      }
+    });
+    workspaceSortField.addEventListener('change', () => {
+      saveSortPrefs();
+      renderWorkspaceList();
+    });
+    workspaceSortDirection.addEventListener('change', () => {
+      saveSortPrefs();
+      renderWorkspaceList();
+    });
+    sessionSortField.addEventListener('change', () => {
+      saveSortPrefs();
+      renderSessionList();
+    });
+    sessionSortDirection.addEventListener('change', () => {
+      saveSortPrefs();
+      renderSessionList();
+    });
+    if (noteContextMenu) {
+      noteContextMenu.addEventListener('click', event => {
+        const actionButton = event.target && event.target.closest('button[data-note-action]');
+        if (!actionButton || !activeNoteTarget) return;
+        const action = actionButton.dataset.noteAction;
+        const target = activeNoteTarget;
+        closeNoteMenu();
+        if (action === 'delete') {
+          void deleteNoteForTarget(target);
+          return;
+        }
+        openNoteModal(target);
+      });
+    }
+    if (noteModal) {
+      noteModal.addEventListener('click', event => {
+        if (event.target === noteModal || (event.target && event.target.closest('[data-note-cancel]'))) {
+          closeNoteModal();
+        }
+        if (event.target && event.target.closest('[data-note-save]')) {
+          void saveActiveNote();
+        }
+      });
+    }
+    if (imagePreviewModal) {
+      imagePreviewModal.addEventListener('click', event => {
+        if (event.target === imagePreviewModal) closeImagePreview();
+      });
+    }
+    if (imagePreviewClose) {
+      imagePreviewClose.addEventListener('click', closeImagePreview);
+    }
+    if (noteInput) {
+      noteInput.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeNoteModal();
+          return;
+        }
+        if (event.key === 'Enter' && event.ctrlKey) {
+          event.preventDefault();
+          void saveActiveNote();
+        }
+      });
+    }
+    document.addEventListener('click', event => {
+      document.querySelectorAll(MENU_SELECTOR + '[open]').forEach(menu => {
+        if (!menu.contains(event.target)) {
+          menu.removeAttribute('open');
+        }
+      });
+      if (noteContextMenu && !noteContextMenu.hidden && !noteContextMenu.contains(event.target)) {
+        closeNoteMenu();
+      }
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      if (imagePreviewModal && !imagePreviewModal.hidden) {
+        event.preventDefault();
+        closeImagePreview();
+        return;
+      }
+      closeNoteMenu();
+      if (noteModal && !noteModal.hidden) closeNoteModal();
+      hideNoteTooltip();
+    });
+
+    syncPaneCollapseState();
+
+    (async function boot() {
+      viewerHead.innerHTML = '<div class="empty-state">正在加载索引...</div>';
+      transcript.innerHTML = '';
+      try {
+        await loadSources();
+        await loadIndex();
+        await loadNotes();
+        updateStats();
+        refreshFilterMenus();
+        renderWorkspaceList(true);
+        await loadSelectedDetailIfAvailable();
+        renderViewer();
+      } catch (error) {
+        viewerHead.innerHTML = '<div class="empty-state">索引加载失败。</div>';
+        transcript.innerHTML = '<div class="empty-state">' + escapeHtml(error.message || '未知错误') + '</div>';
+      }
+    })();
+  </script>
+</body>
+</html>
+
