@@ -3814,13 +3814,19 @@
 
       const tagName = listType === 'numbered' ? 'ol' : 'ul';
       const itemPattern = listType === 'numbered' ? /^\d+\. / : /^- /;
-      const items = String(text || '')
+      const lines = String(text || '')
         .split('\n')
         .map(line => line.trim())
-        .filter(line => line)
-        .map(line => line.replace(itemPattern, ''));
+        .filter(line => line);
+      const firstNumberedLine = listType === 'numbered' ? (lines.find(line => /^\d+\. /.test(line)) || '') : '';
+      const startMatch = firstNumberedLine.match(/^(\d+)\. /);
+      const startNumber = startMatch ? Number(startMatch[1]) : 1;
+      const startAttr = listType === 'numbered' && Number.isSafeInteger(startNumber) && startNumber >= 0 && startNumber !== 1
+        ? ' start="' + String(startNumber) + '"'
+        : '';
+      const items = lines.map(line => line.replace(itemPattern, ''));
 
-      return '<' + tagName + ' class="message-list">' + items.map(item => '<li>' + renderInlineText(item) + '</li>').join('') + '</' + tagName + '>';
+      return '<' + tagName + startAttr + ' class="message-list">' + items.map(item => '<li>' + renderInlineText(item) + '</li>').join('') + '</' + tagName + '>';
     }
 
     function renderTableCell(tagName, value, alignment) {

@@ -88,20 +88,22 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $html | Should Not Match '<script id="app-data" type="application/json">'
     }
 
-    It 'renders the V0.23 visible Yuji brand without renaming internal files' {
+    It 'renders the V0.25 visible Yuji brand without renaming internal files' {
         $html | Should Match '<title>语迹 - AI 对话记录浏览器</title>'
-        $html | Should Match '<h1>语迹 <span class="version-badge">V0\.23</span></h1>'
+        $html | Should Match '<h1>语迹 <span class="version-badge">V0\.25</span></h1>'
         $html | Should Match '<span class="app-subtitle">AI 对话记录浏览器</span>'
         $html | Should Match "const INDEX_URL = './CodexChatIndex\.sources/local-codex/CodexChatIndex\.data\.json';"
         (Test-Path -LiteralPath (Join-Path $projectRoot 'CodexChatIndex.html') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath $buildScript -PathType Leaf) | Should Be $true
     }
 
-    It 'uses V0.23 builder and visible version markers' {
+    It 'uses V0.25 builder and visible version markers' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
 
-        $html | Should Match '<span class="version-badge">V0\.23</span>'
-        $buildSource | Should Match '\$builderVersion = "V0\.23"'
+        $html | Should Match '<span class="version-badge">V0\.25</span>'
+        $buildSource | Should Match '\$builderVersion = "V0\.25"'
+        $html | Should Not Match '<span class="version-badge">V0\.24</span>'
+        $buildSource | Should Not Match '\$builderVersion = "V0\.24"'
         $html | Should Not Match '<span class="version-badge">V0\.22</span>'
         $buildSource | Should Not Match '\$builderVersion = "V0\.22"'
         $html | Should Not Match '<span class="version-badge">V0\.19</span>'
@@ -110,7 +112,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $buildSource | Should Not Match '\$builderVersion = "V0\.18"'
     }
 
-    It 'uses a single V0.23 HTML template source without PowerShell interpolation leftovers' {
+    It 'uses a single V0.25 HTML template source without PowerShell interpolation leftovers' {
         $templatePath = Join-Path $projectRoot 'templates\CodexChatIndex.template.html'
         $templatePath | Should Exist
         $template = Get-Content -LiteralPath $templatePath -Raw
@@ -205,7 +207,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         (Test-Path -LiteralPath $sharedDetailPath -PathType Leaf) | Should Be $true
     }
 
-    It 'keeps the V0.23 source directory free of generated runtime artifacts' {
+    It 'keeps the V0.25 source directory free of generated runtime artifacts' {
         foreach ($artifact in @(
             'CodexChatIndex.html',
             'CodexChatIndex.data.json',
@@ -219,10 +221,34 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         }
     }
 
-    It 'stores the V0.23 version marker in a dedicated source file' {
-        $versionFile = Join-Path $projectRoot 'VERSION_V0.23.txt'
+    It 'stores the V0.25 version marker in a dedicated source file' {
+        $versionFile = Join-Path $projectRoot 'VERSION_V0.25.txt'
         (Test-Path -LiteralPath $versionFile -PathType Leaf) | Should Be $true
-        (Get-Content -LiteralPath $versionFile -Raw) | Should Be 'V0.23'
+        (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.24.txt') -PathType Leaf) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.23.txt') -PathType Leaf) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.23') -PathType Container) | Should Be $true
+        (Get-Content -LiteralPath $versionFile -Raw).Trim() | Should Be 'V0.25'
+    }
+
+    It 'keeps the V0.23 archive beside the active repo without git metadata or temp output' {
+        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.23'
+        (Test-Path -LiteralPath $archiveRoot -PathType Container) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git') -PathType Container) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp') -PathType Container) | Should Be $false
+        foreach ($relative in @(
+            '.gitignore',
+            'Build-CodexChatIndex.cmd',
+            'Build-CodexChatIndex.ps1',
+            'CodexChatIndexServer.py',
+            'Open-CodexChatIndex.cmd',
+            'VERSION_V0.23.txt',
+            'templates\CodexChatIndex.template.html',
+            'tests\Build-CodexChatIndex.Tests.ps1',
+            'tests\fixtures\codex-home\sessions\2026\04\24\rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
+            'tests\fixtures\codex-home\sessions\2026\04\25\rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl'
+        )) {
+            (Test-Path -LiteralPath (Join-Path $archiveRoot $relative) -PathType Leaf) | Should Be $true
+        }
     }
 
     It 'scans only the selected external source folder recursively and marks archived paths' {
@@ -345,7 +371,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
     It 'expands V0.17 local Claude to desktop agent jsonl and VS Code Claude chat conversations' {
         $profileRoot = Join-Path $tempRoot 'claude-profile-extra'
         $claudeHome = Join-Path $profileRoot '.claude'
-        $desktopProjectDir = Join-Path $profileRoot 'AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Claude-3p\local-agent-mode-sessions\bcc5fa91\00000000\local_agent\.claude\projects\C--Users-Administrator-AppData-Local-Claude-3p-local-agent-mode-sessions-bcc5fa91-00000000-local-agent-outputs'
+        $desktopProjectDir = Join-Path $profileRoot 'AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Claude-3p\local-agent-mode-sessions\bcc5fa91\00000000\local_agent\.claude\projects\C--Users-DemoUser-AppData-Local-Claude-3p-local-agent-mode-sessions-bcc5fa91-00000000-local-agent-outputs'
         $vscodeConversationDir = Join-Path $profileRoot 'AppData\Roaming\Code\User\workspaceStorage\abc123\AndrePimenta.claude-code-chat\conversations'
         $mcpLogDir = Join-Path $profileRoot 'AppData\Local\claude-cli-nodejs\Cache\m-work-demo\mcp-logs-claude-vscode'
         New-Item -ItemType Directory -Force (Join-Path $claudeHome 'projects'), (Join-Path $claudeHome 'sessions'), $desktopProjectDir, $vscodeConversationDir, $mcpLogDir | Out-Null
@@ -353,7 +379,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $desktopSessionId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
         @(
             '{"type":"queue-operation","operation":"enqueue","timestamp":"2026-06-15T08:15:26Z","sessionId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"桌面 Claude 提问"}',
-            '{"type":"user","sessionId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","timestamp":"2026-06-15T08:15:27Z","cwd":"C:\\Users\\Administrator\\AppData\\Local\\Claude-3p\\local-agent-mode-sessions\\demo\\outputs","entrypoint":"local-agent","message":{"role":"user","content":"桌面 Claude 提问"}}',
+            '{"type":"user","sessionId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","timestamp":"2026-06-15T08:15:27Z","cwd":"C:\\Users\\DemoUser\\AppData\\Local\\Claude-3p\\local-agent-mode-sessions\\demo\\outputs","entrypoint":"local-agent","message":{"role":"user","content":"桌面 Claude 提问"}}',
             '{"type":"assistant","sessionId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","timestamp":"2026-06-15T08:15:28Z","entrypoint":"local-agent","message":{"role":"assistant","content":[{"type":"thinking","thinking":"桌面 Claude 思考"},{"type":"text","text":"桌面 Claude 回答"}]}}'
         ) | Set-Content -LiteralPath (Join-Path $desktopProjectDir ($desktopSessionId + '.jsonl')) -Encoding UTF8
 
@@ -1219,6 +1245,41 @@ console.log(JSON.stringify(result));
         $result.invalidTable | Should Not Match '<table class="message-table">'
     }
 
+    It 'preserves ordered list numbering when items are separated by blank lines' {
+        $node = @'
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n    function renderViewer)/);
+if (!match) {
+  throw new Error("reader render helpers not found");
+}
+eval(match[0]);
+const result = {
+  separated: renderDeterministicMarkdown("1. first\n\n2. second\n\n3. third"),
+  continuous: renderDeterministicMarkdown("1. first\n2. second"),
+  bullet: renderDeterministicMarkdown("- alpha\n\n- beta"),
+  paragraph: renderDeterministicMarkdown("Release 2026. ordinary paragraph"),
+  codeBlock: renderDeterministicMarkdown("```text\n1. first\n\n2. second\n```")
+};
+console.log(JSON.stringify(result));
+'@
+        $result = node -e $node $outputPath | ConvertFrom-Json -Depth 10
+
+        $result.separated | Should Match '<ol class="message-list">'
+        $result.separated | Should Match '<ol start="2" class="message-list">'
+        $result.separated | Should Match '<ol start="3" class="message-list">'
+        $result.separated | Should Match '<li>first</li>'
+        $result.separated | Should Match '<li>second</li>'
+        $result.separated | Should Match '<li>third</li>'
+        ([regex]::Matches($result.continuous, '<ol\b')).Count | Should Be 1
+        $result.continuous | Should Not Match '<ol start='
+        $result.bullet | Should Match '<ul class="message-list">'
+        $result.bullet | Should Not Match '<ul start='
+        $result.paragraph | Should Not Match '<ol\b'
+        $result.codeBlock | Should Match '<pre class="code-block"><code>1\. first'
+        $result.codeBlock | Should Not Match '<ol\b'
+    }
+
     It 'places execution process between the user question and final answer' {
         $node = @'
 const fs = require("fs");
@@ -1319,7 +1380,7 @@ console.log(JSON.stringify(result));
     }
 
     It 'renders V0.22 collapsible directory and title panes with title-adjacent collapse buttons' {
-        $html | Should Match '<span class="version-badge">V0\.23</span>'
+        $html | Should Match '<span class="version-badge">V0\.25</span>'
         $html | Should Match '<main class="shell" id="appShell">'
         $html | Should Match '<section class="pane" id="workspacePane">'
         $html | Should Match '<section class="pane" id="sessionPane">'
@@ -3089,7 +3150,7 @@ let selectedSessionKey = "session-1";
 function getSelectedSession() {
   return {
     id: "session-id-0001",
-    path: "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\04\\rollout-complete-path.jsonl"
+    path: "C:\\Users\\DemoUser\\.codex\\sessions\\2026\\05\\04\\rollout-complete-path.jsonl"
   };
 }
 
@@ -3119,7 +3180,7 @@ copyText = async value => {
         $result = node -e $node $outputPath | ConvertFrom-Json -Depth 10
 
         @($result.copied).Count | Should Be 2
-        $result.copied[0] | Should Be 'C:\Users\Administrator\.codex\sessions\2026\05\04\rollout-complete-path.jsonl'
+        $result.copied[0] | Should Be 'C:\Users\DemoUser\.codex\sessions\2026\05\04\rollout-complete-path.jsonl'
         $result.copied[1] | Should Match '^codex resume session-id-0001 -C '
         $result.pathToast | Should Match '已复制路径：'
         $result.pathToast | Should Match ([regex]::Escape($result.copied[0]))
@@ -3261,9 +3322,9 @@ console.log(JSON.stringify({ markdown }));
     It 'keeps reply composer actions from taking a full right-side text column' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
 
-        $html | Should Match '<span class="version-badge">V0\.23</span>'
+        $html | Should Match '<span class="version-badge">V0\.25</span>'
         $html | Should Not Match '<span class="version-badge">V0\.12\.1</span>'
-        $buildSource | Should Match '\$builderVersion = "V0\.23"'
+        $buildSource | Should Match '\$builderVersion = "V0\.25"'
         $buildSource | Should Not Match '\$builderVersion = "V0\.12\.1"'
 
         $html | Should Not Match 'padding:\s*12px\s+150px\s+52px\s+14px'
@@ -3391,7 +3452,7 @@ global.APP = {
   workspaces: [
     {
       id: "ws-1",
-      cwd: "M:\\WORK\\OneDrive - Cairo British College\\1_PCSoftware_1\\Codex\\2604116CX_无附件"
+      cwd: "M:\\Demo Workspace\\Codex\\示例项目_无附件"
     }
   ]
 };
@@ -3399,15 +3460,15 @@ global.selectedWorkspaceId = "ws-1";
 
 const session = {
   id: "019e003a-0448-7963-b92a-7c3aba7499c9",
-  cwd: "M:\\WORK\\OneDrive - Cairo British College\\1_PCSoftware_1\\Codex\\2604116CX_无附件",
-  path: "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl"
+  cwd: "M:\\Demo Workspace\\Codex\\示例项目_无附件",
+  path: "C:\\Users\\DemoUser\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl"
 };
 const command = buildReplyResumeCommand(session, "回复");
 console.log(JSON.stringify({ command }));
 '@
         $result = node -e $node $outputPath | ConvertFrom-Json
 
-        $result.command | Should Be 'codex -C "M:\WORK\OneDrive - Cairo British College\1_PCSoftware_1\Codex\2604116CX_无附件" resume 019e003a-0448-7963-b92a-7c3aba7499c9 "回复"'
+        $result.command | Should Be 'codex -C "M:\Demo Workspace\Codex\示例项目_无附件" resume 019e003a-0448-7963-b92a-7c3aba7499c9 "回复"'
     }
 
     It 'escapes reply command text safely for quotes and multiline input' {
@@ -3432,8 +3493,8 @@ global.APP = {
 global.selectedWorkspaceId = "ws-1";
 
 const session = {
-  cwd: "M:\\WORK\\OneDrive - Cairo British College\\1_PCSoftware_1\\Codex\\2604116CX_无附件",
-  path: "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl",
+  cwd: "M:\\Demo Workspace\\Codex\\示例项目_无附件",
+  path: "C:\\Users\\DemoUser\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl",
   id: "019e003a-0448-7963-b92a-7c3aba7499c9"
 };
 const command = buildReplyResumeCommand(session, "第一行\"quoted\"\n第二行");
@@ -3476,7 +3537,7 @@ global.selectedWorkspaceId = "ws-1";
 const session = {
   id: "019e003a-0448-7963-b92a-7c3aba7499c9",
   cwd: "M:\\Project O'Brien",
-  path: "C:\\Users\\Administrator\\.claude\\projects\\demo\\019e003a-0448-7963-b92a-7c3aba7499c9.jsonl"
+  path: "C:\\Users\\DemoUser\\.claude\\projects\\demo\\019e003a-0448-7963-b92a-7c3aba7499c9.jsonl"
 };
 const resume = buildResumeCommand(session);
 const reply = buildReplyResumeCommand(session, "it'll work\n第二行");
@@ -3605,13 +3666,13 @@ APP = {
   workspaces: [
     {
       id: "ws-1",
-      cwd: "M:\\WORK\\OneDrive - Cairo British College\\1_PCSoftware_1\\Codex\\2604116CX_无附件",
+      cwd: "M:\\Demo Workspace\\Codex\\示例项目_无附件",
       sessions: [
         {
           key: "session-1",
           id: "019e003a-0448-7963-b92a-7c3aba7499c9",
-          cwd: "M:\\WORK\\OneDrive - Cairo British College\\1_PCSoftware_1\\Codex\\2604116CX_无附件",
-          path: "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl",
+          cwd: "M:\\Demo Workspace\\Codex\\示例项目_无附件",
+          path: "C:\\Users\\DemoUser\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl",
           title: "Session 1",
           userCount: 1,
           assistantCount: 1
@@ -3676,8 +3737,8 @@ Promise.resolve()
     APP.workspaces[0].sessions.push({
       key: "session-2",
       id: "019e003a-0448-7963-b92a-7c3aba7499d0",
-      cwd: "M:\\WORK\\OneDrive - Cairo British College\\1_PCSoftware_1\\Codex\\2604116CX_无附件",
-      path: "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\07\\rollout-2.jsonl",
+      cwd: "M:\\Demo Workspace\\Codex\\示例项目_无附件",
+      path: "C:\\Users\\DemoUser\\.codex\\sessions\\2026\\05\\07\\rollout-2.jsonl",
       title: "Session 2",
       userCount: 1,
       assistantCount: 1
@@ -3774,7 +3835,7 @@ function getSelectedSession() {
     key: selectedSessionKey,
     id: "019e003a-0448-7963-b92a-7c3aba7499c9",
     cwd: "C:\\Demo",
-    path: "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl"
+    path: "C:\\Users\\DemoUser\\.codex\\sessions\\2026\\05\\07\\rollout.jsonl"
   };
 }
 function showToast() {}
@@ -4886,7 +4947,7 @@ print(json.dumps(payload, ensure_ascii=False))
         $result.dataFileName | Should Be 'CodexChatIndex.data.json'
     }
 
-    It 'redirects root and legacy HTML routes to the V0.23 temp entry path' {
+    It 'redirects root and legacy HTML routes to the V0.25 temp entry path' {
         $python = @'
 import importlib.util
 import json
@@ -5397,7 +5458,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
     It 'sets a recognizable title on the opened cmd window' {
         $openCmd = Get-Content -LiteralPath (Join-Path $projectRoot 'Open-CodexChatIndex.cmd') -Raw
-        $openCmd | Should Match '(?mi)^title Open-CodexChatIndex V0\.23 - Local Server Running'
+        $openCmd | Should Match '(?mi)^title Open-CodexChatIndex V0\.25 - Local Server Running'
         $openCmd | Should Match "root / 'temp'"
         $openCmd | Should Match "root\.parent / '\\u8fd0\\u884c\\u6570\\u636e'"
         $openCmd | Should Match "root\.parent / '\\u5916\\u90e8\\u804a\\u5929\\u8bb0\\u5f55'"
@@ -5427,6 +5488,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         }
     }
 }
+
 
 
 
