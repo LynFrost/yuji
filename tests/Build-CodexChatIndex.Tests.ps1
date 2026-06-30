@@ -88,20 +88,22 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $html | Should Not Match '<script id="app-data" type="application/json">'
     }
 
-    It 'renders the V0.25 visible Yuji brand without renaming internal files' {
+    It 'renders the V0.26 visible Yuji brand without renaming internal files' {
         $html | Should Match '<title>语迹 - AI 对话记录浏览器</title>'
-        $html | Should Match '<h1>语迹 <span class="version-badge">V0\.25</span></h1>'
+        $html | Should Match '<h1>语迹 <span class="version-badge">V0\.26</span></h1>'
         $html | Should Match '<span class="app-subtitle">AI 对话记录浏览器</span>'
         $html | Should Match "const INDEX_URL = './CodexChatIndex\.sources/local-codex/CodexChatIndex\.data\.json';"
         (Test-Path -LiteralPath (Join-Path $projectRoot 'CodexChatIndex.html') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath $buildScript -PathType Leaf) | Should Be $true
     }
 
-    It 'uses V0.25 builder and visible version markers' {
+    It 'uses V0.26 builder and visible version markers' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
 
-        $html | Should Match '<span class="version-badge">V0\.25</span>'
-        $buildSource | Should Match '\$builderVersion = "V0\.25"'
+        $html | Should Match '<span class="version-badge">V0\.26</span>'
+        $buildSource | Should Match '\$builderVersion = "V0\.26"'
+        $html | Should Not Match '<span class="version-badge">V0\.25</span>'
+        $buildSource | Should Not Match '\$builderVersion = "V0\.25"'
         $html | Should Not Match '<span class="version-badge">V0\.24</span>'
         $buildSource | Should Not Match '\$builderVersion = "V0\.24"'
         $html | Should Not Match '<span class="version-badge">V0\.22</span>'
@@ -112,7 +114,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $buildSource | Should Not Match '\$builderVersion = "V0\.18"'
     }
 
-    It 'uses a single V0.25 HTML template source without PowerShell interpolation leftovers' {
+    It 'uses a single V0.26 HTML template source without PowerShell interpolation leftovers' {
         $templatePath = Join-Path $projectRoot 'templates\CodexChatIndex.template.html'
         $templatePath | Should Exist
         $template = Get-Content -LiteralPath $templatePath -Raw
@@ -207,7 +209,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         (Test-Path -LiteralPath $sharedDetailPath -PathType Leaf) | Should Be $true
     }
 
-    It 'keeps the V0.25 source directory free of generated runtime artifacts' {
+    It 'keeps the V0.26 source directory free of generated runtime artifacts' {
         foreach ($artifact in @(
             'CodexChatIndex.html',
             'CodexChatIndex.data.json',
@@ -221,13 +223,48 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         }
     }
 
-    It 'stores the V0.25 version marker in a dedicated source file' {
-        $versionFile = Join-Path $projectRoot 'VERSION_V0.25.txt'
+    It 'stores the V0.26 version marker in a dedicated source file' {
+        $versionFile = Join-Path $projectRoot 'VERSION_V0.26.txt'
         (Test-Path -LiteralPath $versionFile -PathType Leaf) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.25.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.24.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.23.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.23') -PathType Container) | Should Be $true
-        (Get-Content -LiteralPath $versionFile -Raw).Trim() | Should Be 'V0.25'
+        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.25') -PathType Container) | Should Be $true
+        (Get-Content -LiteralPath $versionFile -Raw).Trim() | Should Be 'V0.26'
+    }
+
+    It 'keeps the V0.25 archive beside the active repo with only whitelisted source files' {
+        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.25'
+        (Test-Path -LiteralPath $archiveRoot -PathType Container) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git') -PathType Container) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp') -PathType Container) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $archiveRoot 'demo-55-6-push.txt') -PathType Leaf) | Should Be $false
+        (Test-Path -LiteralPath (Join-Path $archiveRoot 'demo-55-7-merge.txt') -PathType Leaf) | Should Be $false
+
+        $expected = @(
+            '.gitignore',
+            'Build-CodexChatIndex.cmd',
+            'Build-CodexChatIndex.ps1',
+            'CodexChatIndexServer.py',
+            'Open-CodexChatIndex.cmd',
+            'VERSION_V0.25.txt',
+            'templates\CodexChatIndex.template.html',
+            'tests\Build-CodexChatIndex.Tests.ps1',
+            'tests\fixtures\codex-home\sessions\2026\04\24\rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
+            'tests\fixtures\codex-home\sessions\2026\04\25\rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl'
+        )
+        foreach ($relative in $expected) {
+            (Test-Path -LiteralPath (Join-Path $archiveRoot $relative) -PathType Leaf) | Should Be $true
+        }
+
+        $actual = @(
+            Get-ChildItem -LiteralPath $archiveRoot -Recurse -Force |
+                Where-Object { -not $_.PSIsContainer } |
+                ForEach-Object { $_.FullName.Substring($archiveRoot.Length + 1) } |
+                Sort-Object
+        )
+        ($actual -join "`n") | Should Be (($expected | Sort-Object) -join "`n")
     }
 
     It 'keeps the V0.23 archive beside the active repo without git metadata or temp output' {
@@ -1380,7 +1417,7 @@ console.log(JSON.stringify(result));
     }
 
     It 'renders V0.22 collapsible directory and title panes with title-adjacent collapse buttons' {
-        $html | Should Match '<span class="version-badge">V0\.25</span>'
+        $html | Should Match '<span class="version-badge">V0\.26</span>'
         $html | Should Match '<main class="shell" id="appShell">'
         $html | Should Match '<section class="pane" id="workspacePane">'
         $html | Should Match '<section class="pane" id="sessionPane">'
@@ -1841,6 +1878,102 @@ eval(match[0]);
         $result.failure.hidden | Should Be $false
     }
 
+    It 'isolates message copy button clicks from question selection' {
+        $node = @'
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const helperMatch = html.match(/async function copyText\(value\) \{[\s\S]*?\n    \}(?=\n\n    function isExplicitQuoteBlock)/);
+const listenerMatch = html.match(/transcript\.addEventListener\('click', event => \{[\s\S]*?\n    \}\);(?=\n    transcript\.addEventListener\('toggle')/);
+if (!helperMatch || !listenerMatch) {
+  throw new Error("copy helpers or transcript click listener not found");
+}
+
+const toastState = { textContent: "", className: "toast", hidden: true };
+global.document = {
+  getElementById: id => id === "toast" ? toastState : null,
+  createElement: () => ({ value: "", select() {}, remove() {} }),
+  body: { appendChild() {} },
+  execCommand: () => true
+};
+global.setTimeout = () => 1;
+global.clearTimeout = () => {};
+
+eval(helperMatch[0]);
+copyText = async value => {
+  global.__copied = value;
+};
+
+const id = registerMessageCopyText("copy payload");
+const markup = renderCopyButton({ rawText: "copy payload" });
+const copyEvent = {
+  defaultPrevented: false,
+  preventDefault() {
+    this.defaultPrevented = true;
+    this.prevented = true;
+  },
+  stopPropagation() {
+    this.stopped = true;
+  }
+};
+
+const transcriptEvents = {};
+let selectedQuestionKey = "q1";
+let setSelectedCalls = 0;
+const copyButton = {
+  closest(selector) {
+    if (selector === "button, a, input, textarea, select") return copyButton;
+    if (selector === "[data-question-key]") return questionNode;
+    return null;
+  }
+};
+const questionNode = {
+  dataset: { questionKey: "q2" }
+};
+const transcript = {
+  focus() {
+    global.__focused = true;
+  },
+  addEventListener(name, handler) {
+    transcriptEvents[name] = handler;
+  }
+};
+function setSelectedQuestionKey(key) {
+  selectedQuestionKey = key;
+  setSelectedCalls += 1;
+}
+eval(listenerMatch[0]);
+
+(async () => {
+  await handleMessageCopyClick(copyEvent, id);
+  transcriptEvents.click({
+    defaultPrevented: copyEvent.defaultPrevented,
+    target: copyButton
+  });
+  console.log(JSON.stringify({
+    markup,
+    copied: global.__copied,
+    prevented: copyEvent.prevented === true,
+    stopped: copyEvent.stopped === true,
+    selectedQuestionKey,
+    setSelectedCalls,
+    focused: global.__focused === true
+  }));
+})().catch(error => {
+  console.error(error);
+  process.exit(1);
+});
+'@
+        $result = node -e $node $outputPath | ConvertFrom-Json -Depth 10
+
+        $result.markup | Should Match "handleMessageCopyClick\(event, 'message-copy-"
+        $result.copied | Should Be 'copy payload'
+        $result.prevented | Should Be $true
+        $result.stopped | Should Be $true
+        $result.selectedQuestionKey | Should Be 'q1'
+        $result.setSelectedCalls | Should Be 0
+        $result.focused | Should Be $false
+    }
+
     It 'moves message copy actions into the message header to save vertical space' {
         $node = @'
 const fs = require("fs");
@@ -2251,10 +2384,321 @@ console.log(JSON.stringify({ selectedQuestionKey, positions, scrollTop: transcri
         $result = node -e $node $outputPath | ConvertFrom-Json -Depth 10
 
         $result.selectedQuestionKey | Should Be 'q2'
-        [int]$result.lockCount | Should Be 0
+        [int]$result.lockCount | Should Be 1
         [int]$result.rafQueued | Should Be 0
         [int]$result.positions.Count | Should BeGreaterThan 0
         [int]$result.scrollTop | Should Be 1584
+    }
+
+    It 'uses a short locked stable scroll path for keyboard question navigation' {
+        $node = @'
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const cancelMatch = html.match(/function cancelQuestionScrollAnimation\(\) \{[\s\S]*?\n    \}(?=\n\n    function lockTranscriptLayoutForProgrammaticScroll)/);
+const lockMatch = html.match(/function lockTranscriptLayoutForProgrammaticScroll\([^)]*\) \{[\s\S]*?\n    \}(?=\n\n    function unlockTranscriptLayoutForProgrammaticScroll)/);
+const unlockMatch = html.match(/function unlockTranscriptLayoutForProgrammaticScroll\(\) \{[\s\S]*?\n    \}(?=\n\n    function calculateQuestionScrollSpacer)/);
+const stableMatch = html.match(/function stableScrollToQuestionForKeyboard\(questionKey\) \{[\s\S]*?\n    \}(?=\n\n    function scrollToQuestion)/);
+const questionMatch = html.match(/function scrollToQuestion\(questionKey, behavior\) \{[\s\S]*?\n    \}(?=\n\n    function highlightCurrentQuestion)/);
+const selectMatch = html.match(/function setSelectedQuestionKey\(questionKey, options\) \{[\s\S]*?\n    \}(?=\n\n    function focusFirstQuestion)/);
+if (!cancelMatch || !lockMatch || !unlockMatch || !stableMatch || !questionMatch || !selectMatch) {
+  throw new Error("stable keyboard question scroll helpers not found");
+}
+let activeQuestionScrollAnimation = 99;
+let activeQuestionScrollToken = 0;
+let transcriptLayoutLockTimer = 0;
+let selectedQuestionKey = "q1";
+let selectedQuestionKeyIsTemporary = false;
+let rafCallbacks = [];
+let timeoutCalls = [];
+let timeoutCallbacks = [];
+let clearTimeoutCalls = [];
+let lockAdds = 0;
+let lockRemoves = 0;
+let cancelCalls = 0;
+let savedAnchors = 0;
+let q2RectTop = 600;
+const styleCalls = [];
+const scrollCalls = [];
+function requestAnimationFrame(callback) { rafCallbacks.push(callback); return rafCallbacks.length; }
+function cancelAnimationFrame(id) { cancelCalls += 1; }
+function setTimeout(callback, ms) { timeoutCalls.push(ms); timeoutCallbacks.push(callback); return timeoutCalls.length; }
+function clearTimeout(value) { clearTimeoutCalls.push(value); }
+function saveProgressAnchorForCurrentSession() { savedAnchors += 1; }
+function highlightCurrentQuestion() { global.__highlighted = true; }
+const q2 = {
+  dataset: { questionKey: "q2" },
+  offsetTop: 1600,
+  offsetHeight: 120,
+  getBoundingClientRect() { return { top: q2RectTop }; }
+};
+const transcript = {
+  scrollTop: 1000,
+  scrollHeight: 3000,
+  clientHeight: 500,
+  classList: {
+    add(name) { if (name === "is-programmatic-scroll") lockAdds += 1; },
+    remove(name) { if (name === "is-programmatic-scroll") lockRemoves += 1; }
+  },
+  style: {
+    setProperty(name, value) { styleCalls.push({ name, value }); }
+  },
+  querySelectorAll(selector) {
+    if (selector !== "[data-question-key]") return [];
+    return [q2];
+  },
+  getBoundingClientRect() { return { top: 100 }; },
+  scrollTo(args) {
+    scrollCalls.push({ top: args.top, behavior: args.behavior });
+    this.scrollTop = args.top;
+    q2RectTop = scrollCalls.length === 1 ? 222 : 116;
+  }
+};
+function findQuestionElement(questionKey) {
+  return questionKey === "q2" ? q2 : null;
+}
+function calculateQuestionScrollSpacer() { return 32; }
+eval(cancelMatch[0] + "\n" + lockMatch[0] + "\n" + unlockMatch[0] + "\n" + stableMatch[0] + "\n" + questionMatch[0] + "\n" + selectMatch[0]);
+setSelectedQuestionKey("q2", { scroll: true, behavior: "keyboard" });
+const afterSelectBeforeFrames = { scrollCount: scrollCalls.length, rafCount: rafCallbacks.length };
+let frames = 0;
+while (rafCallbacks.length && frames < 5) {
+  const callback = rafCallbacks.shift();
+  callback();
+  frames += 1;
+}
+const beforeTimeout = { lockRemoves, scrollCount: scrollCalls.length, remainingRaf: rafCallbacks.length };
+while (timeoutCallbacks.length) {
+  timeoutCallbacks.shift()();
+}
+console.log(JSON.stringify({
+  selectedQuestionKey,
+  savedAnchors,
+  activeQuestionScrollAnimation,
+  cancelCalls,
+  timeoutCalls,
+  clearTimeoutCalls,
+  lockAdds,
+  lockRemoves,
+  styleCalls,
+  scrollCalls,
+  afterSelectBeforeFrames,
+  beforeTimeout,
+  frames,
+  remainingRaf: rafCallbacks.length
+}));
+'@
+        $result = node -e $node $outputPath | ConvertFrom-Json -Depth 20
+        $scrollCalls = @($result.scrollCalls)
+
+        $result.selectedQuestionKey | Should Be 'q2'
+        $result.savedAnchors | Should Be 1
+        $result.cancelCalls | Should Be 1
+        $result.activeQuestionScrollAnimation | Should Be 0
+        $result.timeoutCalls[0] | Should Be 250
+        $result.lockAdds | Should Be 1
+        $result.beforeTimeout.lockRemoves | Should Be 0
+        $result.lockRemoves | Should Be 1
+        $result.afterSelectBeforeFrames.scrollCount | Should Be 0
+        $result.afterSelectBeforeFrames.rafCount | Should Be 1
+        $scrollCalls.Count | Should Be 2
+        $scrollCalls[0].top | Should Be 1484
+        $scrollCalls[0].behavior | Should Be 'auto'
+        $scrollCalls[1].top | Should Be 1590
+        $scrollCalls[1].behavior | Should Be 'auto'
+        $result.remainingRaf | Should Be 0
+    }
+
+    It 'corrects keyboard question scroll once after layout unlock clamps scroll position' {
+        $node = @'
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const cancelMatch = html.match(/function cancelQuestionScrollAnimation\(\) \{[\s\S]*?\n    \}(?=\n\n    function lockTranscriptLayoutForProgrammaticScroll)/);
+const lockMatch = html.match(/function lockTranscriptLayoutForProgrammaticScroll\([^)]*\) \{[\s\S]*?\n    \}(?=\n\n    function unlockTranscriptLayoutForProgrammaticScroll)/);
+const unlockMatch = html.match(/function unlockTranscriptLayoutForProgrammaticScroll\(\) \{[\s\S]*?\n    \}(?=\n\n    function calculateQuestionScrollSpacer)/);
+const stableMatch = html.match(/function stableScrollToQuestionForKeyboard\(questionKey\) \{[\s\S]*?\n    \}(?=\n\n    function scrollToQuestion)/);
+if (!cancelMatch || !lockMatch || !unlockMatch || !stableMatch) {
+  throw new Error("stable keyboard question scroll helpers not found");
+}
+let activeQuestionScrollAnimation = 0;
+let activeQuestionScrollToken = 0;
+let transcriptLayoutLockTimer = 0;
+let rafCallbacks = [];
+let timeoutCallbacks = [];
+let q2RectTop = 600;
+let unlockCount = 0;
+const styleCalls = [];
+const scrollCalls = [];
+function requestAnimationFrame(callback) { rafCallbacks.push(callback); return rafCallbacks.length; }
+function cancelAnimationFrame() {}
+function setTimeout(callback, ms) { timeoutCallbacks.push(callback); return 1; }
+function clearTimeout() {}
+const q2 = {
+  dataset: { questionKey: "q2" },
+  offsetTop: 1600,
+  offsetHeight: 120,
+  getBoundingClientRect() { return { top: q2RectTop }; }
+};
+const transcript = {
+  scrollTop: 1000,
+  scrollHeight: 26000,
+  clientHeight: 500,
+  classList: {
+    add() {},
+    remove() {
+      unlockCount += 1;
+      this._removed = true;
+      transcript.scrollHeight = 1100;
+      transcript.scrollTop = 600;
+      q2RectTop = 0;
+    }
+  },
+  style: {
+    setProperty(name, value) {
+      styleCalls.push({ name, value });
+    }
+  },
+  getBoundingClientRect() { return { top: 100 }; },
+  scrollTo(args) {
+    scrollCalls.push({ top: args.top, behavior: args.behavior });
+    this.scrollTop = args.top;
+    q2RectTop = 116;
+  }
+};
+function findQuestionElement(questionKey) { return questionKey === "q2" ? q2 : null; }
+function calculateQuestionScrollSpacer() { return unlockCount ? 800 : 0; }
+eval(cancelMatch[0] + "\n" + lockMatch[0] + "\n" + unlockMatch[0] + "\n" + stableMatch[0]);
+stableScrollToQuestionForKeyboard("q2");
+let frames = 0;
+while (rafCallbacks.length && frames < 5) {
+  const callback = rafCallbacks.shift();
+  callback();
+  frames += 1;
+}
+const beforeTimeout = { scrollCount: scrollCalls.length, unlockCount, finalScrollTop: transcript.scrollTop };
+while (timeoutCallbacks.length) {
+  timeoutCallbacks.shift()();
+}
+console.log(JSON.stringify({ scrollCalls, styleCalls, unlockCount, frames, beforeTimeout, remainingRaf: rafCallbacks.length, finalScrollTop: transcript.scrollTop }));
+'@
+        $result = node -e $node $outputPath | ConvertFrom-Json -Depth 20
+        $scrollCalls = @($result.scrollCalls)
+        $styleCalls = @($result.styleCalls)
+
+        $result.unlockCount | Should Be 1
+        $result.beforeTimeout.unlockCount | Should Be 0
+        $result.beforeTimeout.scrollCount | Should Be 1
+        $scrollCalls.Count | Should Be 2
+        $styleCalls.Count | Should Be 2
+        $styleCalls[0].value | Should Be '0px'
+        $styleCalls[1].value | Should Be '800px'
+        $scrollCalls[0].top | Should Be 1484
+        $scrollCalls[1].top | Should Be 484
+        $scrollCalls[1].behavior | Should Be 'auto'
+        $result.finalScrollTop | Should Be 484
+        $result.remainingRaf | Should Be 0
+    }
+
+    It 'does not correct keyboard question scroll when the target is within tolerance' {
+        $node = @'
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const cancelMatch = html.match(/function cancelQuestionScrollAnimation\(\) \{[\s\S]*?\n    \}(?=\n\n    function lockTranscriptLayoutForProgrammaticScroll)/);
+const lockMatch = html.match(/function lockTranscriptLayoutForProgrammaticScroll\([^)]*\) \{[\s\S]*?\n    \}(?=\n\n    function unlockTranscriptLayoutForProgrammaticScroll)/);
+const unlockMatch = html.match(/function unlockTranscriptLayoutForProgrammaticScroll\(\) \{[\s\S]*?\n    \}(?=\n\n    function calculateQuestionScrollSpacer)/);
+const stableMatch = html.match(/function stableScrollToQuestionForKeyboard\(questionKey\) \{[\s\S]*?\n    \}(?=\n\n    function scrollToQuestion)/);
+if (!cancelMatch || !lockMatch || !unlockMatch || !stableMatch) {
+  throw new Error("stable keyboard question scroll helpers not found");
+}
+let activeQuestionScrollAnimation = 0;
+let activeQuestionScrollToken = 0;
+let transcriptLayoutLockTimer = 0;
+let rafCallbacks = [];
+let timeoutCallbacks = [];
+let unlockCount = 0;
+let q2RectTop = 600;
+const scrollCalls = [];
+function requestAnimationFrame(callback) { rafCallbacks.push(callback); return rafCallbacks.length; }
+function cancelAnimationFrame() {}
+function setTimeout(callback, ms) { timeoutCallbacks.push(callback); return 1; }
+function clearTimeout() {}
+const q2 = {
+  dataset: { questionKey: "q2" },
+  offsetTop: 1600,
+  offsetHeight: 120,
+  getBoundingClientRect() { return { top: q2RectTop }; }
+};
+const transcript = {
+  scrollTop: 1000,
+  scrollHeight: 3000,
+  clientHeight: 500,
+  classList: { add() {}, remove() { unlockCount += 1; } },
+  style: { setProperty() {} },
+  getBoundingClientRect() { return { top: 100 }; },
+  scrollTo(args) {
+    scrollCalls.push(args);
+    this.scrollTop = args.top;
+    q2RectTop = 117;
+  }
+};
+function findQuestionElement(questionKey) { return questionKey === "q2" ? q2 : null; }
+function calculateQuestionScrollSpacer() { return 0; }
+eval(cancelMatch[0] + "\n" + lockMatch[0] + "\n" + unlockMatch[0] + "\n" + stableMatch[0]);
+stableScrollToQuestionForKeyboard("q2");
+let frames = 0;
+while (rafCallbacks.length && frames < 5) {
+  const callback = rafCallbacks.shift();
+  callback();
+  frames += 1;
+}
+while (timeoutCallbacks.length) {
+  timeoutCallbacks.shift()();
+}
+console.log(JSON.stringify({ scrollCalls, unlockCount, remainingRaf: rafCallbacks.length }));
+'@
+        $result = node -e $node $outputPath | ConvertFrom-Json -Depth 20
+
+        @($result.scrollCalls).Count | Should Be 1
+        $result.unlockCount | Should Be 1
+        $result.remainingRaf | Should Be 0
+    }
+
+    It 'keeps non-keyboard question selection on the existing deferred scroll path' {
+        $node = @'
+const fs = require("fs");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const selectMatch = html.match(/function setSelectedQuestionKey\(questionKey, options\) \{[\s\S]*?\n    \}(?=\n\n    function focusFirstQuestion)/);
+if (!selectMatch) {
+  throw new Error("question selection helper not found");
+}
+let selectedQuestionKey = null;
+let selectedQuestionKeyIsTemporary = false;
+let rafCallbacks = [];
+let stableCalls = 0;
+let scrollCalls = 0;
+function requestAnimationFrame(callback) { rafCallbacks.push(callback); return rafCallbacks.length; }
+function highlightCurrentQuestion() {}
+function saveProgressAnchorForCurrentSession() {}
+function stableScrollToQuestionForKeyboard() { stableCalls += 1; }
+function scrollToQuestion(questionKey, behavior) {
+  scrollCalls += 1;
+  global.__scroll = { questionKey, behavior };
+}
+eval(selectMatch[0]);
+setSelectedQuestionKey("q2", { scroll: true, behavior: "auto" });
+const beforeFrame = { stableCalls, scrollCalls, rafCount: rafCallbacks.length };
+while (rafCallbacks.length) {
+  rafCallbacks.shift()();
+}
+console.log(JSON.stringify({ beforeFrame, stableCalls, scrollCalls, scroll: global.__scroll }));
+'@
+        $result = node -e $node $outputPath | ConvertFrom-Json -Depth 10
+
+        $result.beforeFrame.stableCalls | Should Be 0
+        $result.beforeFrame.scrollCalls | Should Be 0
+        $result.beforeFrame.rafCount | Should Be 1
+        $result.stableCalls | Should Be 0
+        $result.scrollCalls | Should Be 1
+        $result.scroll.behavior | Should Be 'auto'
     }
 
     It 're-converges explicit smooth question navigation when lazy layout shifts the target element' {
@@ -3322,9 +3766,9 @@ console.log(JSON.stringify({ markdown }));
     It 'keeps reply composer actions from taking a full right-side text column' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
 
-        $html | Should Match '<span class="version-badge">V0\.25</span>'
+        $html | Should Match '<span class="version-badge">V0\.26</span>'
         $html | Should Not Match '<span class="version-badge">V0\.12\.1</span>'
-        $buildSource | Should Match '\$builderVersion = "V0\.25"'
+        $buildSource | Should Match '\$builderVersion = "V0\.26"'
         $buildSource | Should Not Match '\$builderVersion = "V0\.12\.1"'
 
         $html | Should Not Match 'padding:\s*12px\s+150px\s+52px\s+14px'
@@ -4947,7 +5391,7 @@ print(json.dumps(payload, ensure_ascii=False))
         $result.dataFileName | Should Be 'CodexChatIndex.data.json'
     }
 
-    It 'redirects root and legacy HTML routes to the V0.25 temp entry path' {
+    It 'redirects root and legacy HTML routes to the V0.26 temp entry path' {
         $python = @'
 import importlib.util
 import json
@@ -5458,7 +5902,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
     It 'sets a recognizable title on the opened cmd window' {
         $openCmd = Get-Content -LiteralPath (Join-Path $projectRoot 'Open-CodexChatIndex.cmd') -Raw
-        $openCmd | Should Match '(?mi)^title Open-CodexChatIndex V0\.25 - Local Server Running'
+        $openCmd | Should Match '(?mi)^title Open-CodexChatIndex V0\.26 - Local Server Running'
         $openCmd | Should Match "root / 'temp'"
         $openCmd | Should Match "root\.parent / '\\u8fd0\\u884c\\u6570\\u636e'"
         $openCmd | Should Match "root\.parent / '\\u5916\\u90e8\\u804a\\u5929\\u8bb0\\u5f55'"

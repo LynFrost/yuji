@@ -1798,7 +1798,7 @@ $searchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) {
     Join-Path $effectiveDataRoot 'CodexChatIndex.search.json'
 }
 Update-SourceManifest -RuntimeDataRoot $resolvedDataRoot -Source $sourceInfo
-$builderVersion = "V0.25"
+$builderVersion = "V0.26"
 $indexRelativePath = Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $dataOutput
 if ($indexRelativePath -notmatch '^(\./|\.\./|/)') {
     $indexRelativePath = './' + $indexRelativePath

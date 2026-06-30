@@ -3633,10 +3633,18 @@
       }
     }
 
+    function handleMessageCopyClick(event, id) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return copyMessageText(id);
+    }
+
     function renderCopyButton(event) {
       const id = registerMessageCopyText(event && (event.rawText || event.summary || ''));
       if (!id) return '';
-      return '<button type="button" class="message-copy" onclick="copyMessageText(\'' + id + '\')" title="复制全文">复制全文</button>';
+      return '<button type="button" class="message-copy" onclick="handleMessageCopyClick(event, \'' + id + '\')" title="复制全文">复制全文</button>';
     }
 
     let imagePreviewTrigger = null;
@@ -4005,14 +4013,16 @@
       activeQuestionScrollAnimation = 0;
     }
 
-    function lockTranscriptLayoutForProgrammaticScroll() {
+    function lockTranscriptLayoutForProgrammaticScroll(timeoutMs, onUnlock) {
       if (!transcript || !transcript.classList) return;
       transcript.classList.add('is-programmatic-scroll');
       if (transcriptLayoutLockTimer) clearTimeout(transcriptLayoutLockTimer);
+      const lockMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1200;
       transcriptLayoutLockTimer = setTimeout(() => {
         transcript.classList.remove('is-programmatic-scroll');
         transcriptLayoutLockTimer = 0;
-      }, 1200);
+        if (typeof onUnlock === 'function') onUnlock();
+      }, lockMs);
     }
 
     function unlockTranscriptLayoutForProgrammaticScroll() {
@@ -4142,9 +4152,72 @@
       requestAnimationFrame(settle);
     }
 
+    function stableScrollToQuestionForKeyboard(questionKey) {
+      cancelQuestionScrollAnimation();
+      const token = ++activeQuestionScrollToken;
+      const measureElementTop = element => {
+        return typeof element.getBoundingClientRect === 'function' && typeof transcript.getBoundingClientRect === 'function'
+          ? element.getBoundingClientRect().top - transcript.getBoundingClientRect().top
+          : 16;
+      };
+      let scrollToMeasuredTarget = null;
+      lockTranscriptLayoutForProgrammaticScroll(250, () => {
+        if (token !== activeQuestionScrollToken) return;
+        const element = findQuestionElement(questionKey);
+        if (!element || !transcript || typeof scrollToMeasuredTarget !== 'function') return;
+        if (transcript.style) {
+          const spacer = calculateQuestionScrollSpacer(element);
+          transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+        }
+        if (Math.abs(measureElementTop(element) - 16) > 6) {
+          scrollToMeasuredTarget();
+        }
+      });
+      const run = () => {
+        if (token !== activeQuestionScrollToken) return;
+        const element = findQuestionElement(questionKey);
+        if (!element || !transcript) {
+          unlockTranscriptLayoutForProgrammaticScroll();
+          return;
+        }
+        if (transcript.style) {
+          const spacer = calculateQuestionScrollSpacer(element);
+          transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+        }
+        const measureTargetTop = () => {
+          let targetTop = element.offsetTop - 16;
+          if (typeof transcript.getBoundingClientRect === 'function' && typeof element.getBoundingClientRect === 'function') {
+            const transcriptRect = transcript.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+            targetTop = (transcript.scrollTop || 0) + (elementRect.top - transcriptRect.top) - 16;
+          }
+          return Math.max(0, targetTop);
+        };
+        scrollToMeasuredTarget = () => {
+          transcript.scrollTo({
+            top: measureTargetTop(),
+            behavior: 'auto'
+          });
+        };
+        scrollToMeasuredTarget();
+        requestAnimationFrame(() => {
+          if (token !== activeQuestionScrollToken) return;
+          const elementTop = measureElementTop(element);
+          if (Math.abs(elementTop - 16) > 6) {
+            scrollToMeasuredTarget();
+          }
+        });
+      };
+      requestAnimationFrame(run);
+    }
+
     function scrollToQuestion(questionKey, behavior) {
       const element = findQuestionElement(questionKey);
       if (!element) return false;
+      if (behavior === 'keyboard') {
+        stableScrollToQuestionForKeyboard(questionKey);
+        return true;
+      }
       if (transcript && transcript.style) {
         const spacer = calculateQuestionScrollSpacer(element);
         transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
@@ -4182,7 +4255,7 @@
       if (settings && settings.scroll) {
         const behavior = settings.behavior || 'smooth';
         if (behavior === 'keyboard') {
-          scrollToQuestion(selectedQuestionKey, behavior);
+          stableScrollToQuestionForKeyboard(selectedQuestionKey);
         } else {
           requestAnimationFrame(() => scrollToQuestion(selectedQuestionKey, behavior));
         }
@@ -4549,6 +4622,7 @@
       }
     });
     transcript.addEventListener('click', event => {
+      if (event.defaultPrevented) return;
       if (event.target && event.target.closest('button, a, input, textarea, select')) return;
       transcript.focus({ preventScroll: true });
       const question = event.target.closest('[data-question-key]');
