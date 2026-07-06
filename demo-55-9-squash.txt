@@ -1,3 +1,0 @@
-squash line 1
-squash line 2
-squash line 3
