@@ -8800,7 +8800,31 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $first.notice | Should Match '缓存版本不兼容'
         $upgradedCache.cacheVersion | Should Be 5
         $upgradedCache.builderVersion | Should Be 'V0.32'
-        $upgradedCache.parserRevision | Should Be 3
+        $upgradedCache.parserRevision | Should Be 4
+        $second.mode | Should Be 'Incremental'
+        $second.noChange | Should Be $true
+    }
+
+    It 'rebuilds a V0.32 parser revision 3 cache once for legacy escaped image recovery' {
+        $cacheRoot = Join-Path $script:v031TempRoot 'v032-parser-revision-4-upgrade'
+        $outputPath = Join-Path $cacheRoot 'CodexChatIndex.html'
+        $fixtureRoot = Join-Path $here 'fixtures\codex-v031-events'
+        & $buildScript -CodexHome $fixtureRoot -OutputPath $outputPath -DataRoot $cacheRoot -RefreshMode Full -JsonSummary | Out-Null
+        $sourceRoot = Get-TestSourceRoot $cacheRoot
+        $cachePath = Join-Path $sourceRoot 'CodexChatIndex.cache.json'
+        $cache = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json -Depth 100
+        $cache.builderVersion = 'V0.32'
+        $cache.parserRevision = 3
+        Set-Content -LiteralPath $cachePath -Value ($cache | ConvertTo-Json -Depth 100) -Encoding UTF8
+
+        $first = (& $buildScript -CodexHome $fixtureRoot -OutputPath $outputPath -DataRoot $cacheRoot -RefreshMode Incremental -JsonSummary | Select-Object -Last 1) | ConvertFrom-Json
+        $upgradedCache = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json -Depth 100
+        $second = (& $buildScript -CodexHome $fixtureRoot -OutputPath $outputPath -DataRoot $cacheRoot -RefreshMode Incremental -JsonSummary | Select-Object -Last 1) | ConvertFrom-Json
+
+        $first.mode | Should Be 'Full'
+        $first.notice | Should Match '缓存版本不兼容'
+        $upgradedCache.builderVersion | Should Be 'V0.32'
+        $upgradedCache.parserRevision | Should Be 4
         $second.mode | Should Be 'Incremental'
         $second.noChange | Should Be $true
     }
@@ -8814,7 +8838,7 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $v031Events.Html | Should Match '<span class="version-badge">V0\.32</span>'
         $v031Events.Cache.cacheVersion | Should Be 5
         $v031Events.Cache.builderVersion | Should Be 'V0.32'
-        $v031Events.Cache.parserRevision | Should Be 3
+        $v031Events.Cache.parserRevision | Should Be 4
     }
 
     It 'keeps the exact 21-file V0.30 source archive' {
@@ -8976,6 +9000,8 @@ Describe 'V0.32 managed image assets and title-group collapse' {
         $script:v032DataGifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
         $script:v032LocalImage = Join-Path $script:v032Cwd 'snapshot.png'
         [IO.File]::WriteAllBytes($script:v032LocalImage, [Convert]::FromBase64String($script:v032LocalPngBase64))
+        $script:v032EscapedLegacyImage = Join-Path $script:v032Cwd '微信图片_20260908185726_8363_7.png'
+        [IO.File]::WriteAllBytes($script:v032EscapedLegacyImage, [Convert]::FromBase64String($script:v032LocalPngBase64))
         $script:v032ExpectedLocalAsset = (Get-FileHash -LiteralPath $script:v032LocalImage -Algorithm SHA256).Hash.ToLowerInvariant()
         $sha = [Security.Cryptography.SHA256]::Create()
         try {
@@ -8991,7 +9017,7 @@ Describe 'V0.32 managed image assets and title-group collapse' {
             } } | ConvertTo-Json -Depth 30 -Compress),
             ([ordered]@{ timestamp = '2026-09-27T10:00:01Z'; type = 'response_item'; payload = [ordered]@{
                 type = 'message'; role = 'user'; content = @(
-                    [ordered]@{ type = 'input_text'; text = '托管图片：![local](snapshot.png) ![loopback](http://127.0.0.1:1/missing.png)' },
+                    [ordered]@{ type = 'input_text'; text = '托管图片：![local](snapshot.png) ![loopback](http://127.0.0.1:1/missing.png) 历史图片：微信图片\_20260908185726\_8363\_7.png' },
                     [ordered]@{ type = 'input_image'; image_url = ('data:image/gif;base64,' + $script:v032DataGifBase64) }
                 )
             } } | ConvertTo-Json -Depth 30 -Compress),
@@ -9014,8 +9040,9 @@ Describe 'V0.32 managed image assets and title-group collapse' {
         $user = @($v032FirstDetail.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0]
         $managed = @($user.images | Where-Object type -eq 'managed')
         $failedUrl = @($user.images | Where-Object { $_.type -eq 'url' -and $_.status -eq 'unavailable' })
-        @($managed).Count | Should Be 2
+        @($managed).Count | Should Be 3
         (@($managed.assetId) -contains $v032ExpectedLocalAsset) | Should Be $true
+        @($managed | Where-Object { $_.assetId -eq $v032ExpectedLocalAsset }).Count | Should Be 2
         (@($managed.assetId) -contains $v032ExpectedDataAsset) | Should Be $true
         @($failedUrl).Count | Should Be 1
         foreach ($image in $managed) {
@@ -9026,6 +9053,13 @@ Describe 'V0.32 managed image assets and title-group collapse' {
         $state = Get-Content -LiteralPath (Join-Path $v032Runtime 'CodexChatIndex.images\state.json') -Raw | ConvertFrom-Json -Depth 100
         $state.imageMigrationVersion | Should Be 1
         $state.migrations.'local-codex' | Should Be 1
+    }
+
+    It 'restores Markdown-escaped underscores in legacy relative image filenames' {
+        $user = @($v032FirstDetail.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0]
+        $user.rawText | Should Match '微信图片\\_20260908185726\\_8363\\_7\.png'
+        $managed = @($user.images | Where-Object type -eq 'managed')
+        @($managed | Where-Object { $_.assetId -eq $v032ExpectedLocalAsset }).Count | Should Be 2
     }
 
     It 'restores managed local images for a downloaded WebDAV source without reading the original local path' {

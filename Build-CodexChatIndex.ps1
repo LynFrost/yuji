@@ -633,35 +633,58 @@ function Resolve-ImageCandidate {
 
     if ($DisableLocalPathImages) { return $null }
 
+    $candidateType = [string](Get-ObjectPropertyValue $Candidate @('type'))
     if ($value -match '^file://') {
         try { $value = ([System.Uri]::new($value)).LocalPath } catch { return $null }
     }
-    try {
-        $path = if ([System.IO.Path]::IsPathRooted($value)) {
-            [System.IO.Path]::GetFullPath($value)
-        } elseif (-not [string]::IsNullOrWhiteSpace($Cwd) -and $Cwd -ne '(未知工作目录)') {
-            [System.IO.Path]::GetFullPath((Join-Path $Cwd $value))
-        } else {
-            return $null
+
+    $pathCandidates = [System.Collections.Generic.List[string]]::new()
+    [void]$pathCandidates.Add($value)
+    if (
+        $candidateType -in @('markdown_image', 'text_image') -and
+        -not [System.IO.Path]::IsPathRooted($value) -and
+        $value.Contains('\_')
+    ) {
+        $markdownUnescaped = $value.Replace('\_', '_')
+        if ($markdownUnescaped -cne $value) {
+            [void]$pathCandidates.Add($markdownUnescaped)
         }
-    } catch {
-        return $null
     }
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        return [ordered]@{ src = $value; type = 'local'; localPath = $path; status = 'unavailable' }
+
+    $firstMissingPath = ''
+    foreach ($pathValue in $pathCandidates) {
+        $path = $null
+        try {
+            if ([System.IO.Path]::IsPathRooted($pathValue)) {
+                $path = [System.IO.Path]::GetFullPath($pathValue)
+            } elseif (-not [string]::IsNullOrWhiteSpace($Cwd) -and $Cwd -ne '(未知工作目录)') {
+                $path = [System.IO.Path]::GetFullPath((Join-Path $Cwd $pathValue))
+            } else {
+                continue
+            }
+        } catch {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($firstMissingPath)) { $firstMissingPath = $path }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+
+        $file = Get-Item -LiteralPath $path
+        $resolved = [ordered]@{
+            src = $value
+            type = 'local'
+            localPath = $file.FullName
+            name = $file.Name
+            sizeBytes = [int64]$file.Length
+        }
+        if ([int64]$file.Length -gt [int64]$script:MaxLocalImageBytes) {
+            $resolved.status = 'too-large'
+        }
+        return $resolved
     }
-    $file = Get-Item -LiteralPath $path
-    $resolved = [ordered]@{
-        src = $value
-        type = 'local'
-        localPath = $file.FullName
-        name = $file.Name
-        sizeBytes = [int64]$file.Length
-    }
-    if ([int64]$file.Length -gt [int64]$script:MaxLocalImageBytes) {
-        $resolved.status = 'too-large'
-    }
-    return $resolved
+
+    if ([string]::IsNullOrWhiteSpace($firstMissingPath)) { return $null }
+    return [ordered]@{ src = $value; type = 'local'; localPath = $firstMissingPath; status = 'unavailable' }
 }
 
 function Get-ManagedImageFromReferenceKey {
@@ -3820,7 +3843,7 @@ $otherSearchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) 
     Join-Path $effectiveDataRoot 'CodexChatIndex.search.other.json'
 }
 $builderVersion = "V0.32"
-$parserRevision = 3
+$parserRevision = 4
 $templatePath = Join-Path $PSScriptRoot 'templates\CodexChatIndex.template.html'
 $indexRelativePath = Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $dataOutput
 if ($indexRelativePath -notmatch '^(\./|\.\./|/)') {
