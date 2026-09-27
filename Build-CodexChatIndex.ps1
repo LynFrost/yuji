@@ -11,11 +11,22 @@ param(
     [ValidateSet("Full", "Incremental", "Current")]
     [string]$RefreshMode = "Full",
     [string]$CurrentSessionPath = "",
+    [string]$MachineName = [Environment]::MachineName,
+    [switch]$StatusOnly,
+    [string]$ExportSyncInventoryPath = "",
+    [string]$RemoteSourceRoot = "",
+    [string]$OriginMapPath = "",
+    [switch]$DisableLocalPathImages,
     [switch]$JsonSummary
 )
 
 $ErrorActionPreference = "Stop"
 $buildStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$script:MaxLocalImageBytes = 30MB
+$script:ToolRawSearchEventCharLimit = 16KB
+$script:ToolRawSearchSessionCharLimit = 256KB
+$script:ToolRawSearchGlobalCharLimit = 128MB
+$script:SearchTextGlobalCharLimit = 384MB
 
 $outputPathWasProvided = -not [string]::IsNullOrWhiteSpace($OutputPath)
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -67,7 +78,7 @@ function Render-HtmlTemplate {
         throw "HTML template contains unresolved placeholders."
     }
 
-    return $template
+    return ($template -replace "`r`n?", "`n")
 }
 
 function Convert-ToFileUri {
@@ -220,10 +231,10 @@ function Get-CodexMessageContentImages {
         if ($null -eq $part -or $part -is [string]) { continue }
         $type = [string](Get-ObjectPropertyValue $part @('type'))
         if ($type -ne 'input_image') { continue }
-        $src = [string](Get-ObjectPropertyValue $part @('image_url', 'url', 'data', 'source'))
-        if ([string]::IsNullOrWhiteSpace($src)) {
-            $imageUrl = Get-ObjectPropertyValue $part @('image_url')
-            $src = [string](Get-ObjectPropertyValue $imageUrl @('url', 'data'))
+        $source = Get-ObjectPropertyValue $part @('image_url', 'url', 'data', 'source', 'path')
+        $src = if ($source -is [string]) { [string]$source } else { "" }
+        if ([string]::IsNullOrWhiteSpace($src) -and $null -ne $source) {
+            $src = [string](Get-ObjectPropertyValue $source @('url', 'data', 'path', 'file_path', 'filePath'))
         }
         if ([string]::IsNullOrWhiteSpace($src)) { continue }
         [void]$images.Add([ordered]@{
@@ -232,6 +243,220 @@ function Get-CodexMessageContentImages {
         })
     }
     return @($images)
+}
+
+function Get-ClaudeMessageContentImages {
+    param([AllowNull()]$Content)
+    $images = [System.Collections.Generic.List[object]]::new()
+    if ($null -eq $Content -or $Content -is [string]) { return @() }
+    foreach ($part in @($Content)) {
+        if ($null -eq $part -or $part -is [string]) { continue }
+        if ([string](Get-ObjectPropertyValue $part @('type')) -ne 'image') { continue }
+        $source = Get-ObjectPropertyValue $part @('source')
+        $sourceType = [string](Get-ObjectPropertyValue $source @('type'))
+        $src = ""
+        if ($sourceType -eq 'base64') {
+            $mediaType = [string](Get-ObjectPropertyValue $source @('media_type', 'mediaType'))
+            $data = [string](Get-ObjectPropertyValue $source @('data'))
+            if ($mediaType -match '^image/(png|jpeg|gif|webp|avif)$' -and -not [string]::IsNullOrWhiteSpace($data)) {
+                $src = 'data:' + $mediaType.ToLowerInvariant() + ';base64,' + $data
+            }
+        } else {
+            $candidate = Get-ObjectPropertyValue $source @('url', 'path', 'file_path', 'filePath', 'data')
+            if ($candidate -is [string]) { $src = [string]$candidate }
+        }
+        if ([string]::IsNullOrWhiteSpace($src)) {
+            $candidate = Get-ObjectPropertyValue $part @('url', 'path', 'file_path', 'filePath', 'data')
+            if ($candidate -is [string]) { $src = [string]$candidate }
+        }
+        if ([string]::IsNullOrWhiteSpace($src)) { continue }
+        [void]$images.Add([ordered]@{
+            src = $src
+            type = 'claude_image'
+        })
+    }
+    return @($images)
+}
+
+function Get-ReaderEventImages {
+    param([AllowNull()]$Event)
+    if ($null -eq $Event) { return @() }
+    if ($Event -is [System.Collections.IDictionary]) {
+        if ($Event.Contains('images')) { return @($Event['images']) }
+        return @()
+    }
+    if ($Event.PSObject.Properties.Name -contains 'images') { return @($Event.images) }
+    return @()
+}
+
+function Set-ReaderEventImages {
+    param(
+        [AllowNull()]$Event,
+        [object[]]$Images
+    )
+    if ($null -eq $Event) { return }
+    if ($Event -is [System.Collections.IDictionary]) {
+        if ($Images -and @($Images).Count -gt 0) { $Event['images'] = @($Images) }
+        elseif ($Event.Contains('images')) { $Event.Remove('images') }
+        return
+    }
+    if ($Images -and @($Images).Count -gt 0) {
+        $Event | Add-Member -NotePropertyName images -NotePropertyValue @($Images) -Force
+    } elseif ($Event.PSObject.Properties.Name -contains 'images') {
+        $Event.PSObject.Properties.Remove('images')
+    }
+}
+
+function Get-SupportedImageMimeType {
+    param([AllowNull()][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    switch ([System.IO.Path]::GetExtension($Path).ToLowerInvariant()) {
+        '.png' { return 'image/png' }
+        '.jpg' { return 'image/jpeg' }
+        '.jpeg' { return 'image/jpeg' }
+        '.gif' { return 'image/gif' }
+        '.webp' { return 'image/webp' }
+        '.avif' { return 'image/avif' }
+        default { return "" }
+    }
+}
+
+function Get-TextImageCandidates {
+    param([AllowNull()][string]$RawText)
+    if ([string]::IsNullOrWhiteSpace($RawText)) { return @() }
+    $candidates = [System.Collections.Generic.List[object]]::new()
+    $markdownPattern = '!\[[^\]]*\]\((?<target><[^>]+>|[^)\r\n]+)\)'
+    foreach ($match in [regex]::Matches($RawText, $markdownPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        $target = ([string]$match.Groups['target'].Value).Trim()
+        if ($target.StartsWith('<') -and $target.EndsWith('>')) {
+            $target = $target.Substring(1, $target.Length - 2).Trim()
+        } elseif ($target -match '^(?<path>.+?)\s+["''][^"'']*["'']$') {
+            $target = [string]$Matches['path']
+        }
+        $target = $target.Trim(' ', '"', "'")
+        if (-not [string]::IsNullOrWhiteSpace($target)) {
+            [void]$candidates.Add([ordered]@{ src = $target; type = 'markdown_image' })
+        }
+    }
+
+    $patterns = @(
+        'https?://[^\s<>"'']+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s<>"'']*)?',
+        '(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n<>|?*"]+?\.(?:png|jpe?g|gif|webp|avif)(?=$|[\s)\]},;!?，。；！])',
+        '["''][^"''\r\n]+\.(?:png|jpe?g|gif|webp|avif)["'']',
+        '(?:\.{1,2}[\\/])?[^\s<>"''()、，。]+[\\/][^\s<>"''()、，。]+\.(?:png|jpe?g|gif|webp|avif)',
+        '(?<![\p{L}\p{N}_.-])[\p{L}\p{N}_.-]+\.(?:png|jpe?g|gif|webp|avif)(?![\p{L}\p{N}_.-])'
+    )
+    foreach ($pattern in $patterns) {
+        foreach ($match in [regex]::Matches($RawText, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            $candidate = ([string]$match.Value).Trim(' ', '"', "'", ')', ']', '}', ',', ';', '!', '，', '。', '；', '！')
+            if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                $coveredByHigherPriorityCandidate = $false
+                if ($candidate -notmatch '[\\/]' -and $candidate -notmatch '^https?://') {
+                    foreach ($existing in $candidates) {
+                        $existingValue = [string](Get-ObjectPropertyValue $existing @('src'))
+                        $existingValue = $existingValue.Trim(' ', '"', "'", '<', '>')
+                        if (-not $existingValue.EndsWith($candidate, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                        $prefixLength = $existingValue.Length - $candidate.Length
+                        if ($prefixLength -eq 0 -or $existingValue[$prefixLength - 1] -match '[\\/\s]') {
+                            $coveredByHigherPriorityCandidate = $true
+                            break
+                        }
+                    }
+                }
+                if ($coveredByHigherPriorityCandidate) { continue }
+                [void]$candidates.Add([ordered]@{ src = $candidate; type = 'text_image' })
+            }
+        }
+    }
+    return @($candidates)
+}
+
+function Resolve-ImageCandidate {
+    param(
+        [AllowNull()]$Candidate,
+        [AllowNull()][string]$Cwd
+    )
+    if ($null -eq $Candidate) { return $null }
+    $value = if ($Candidate -is [string]) {
+        [string]$Candidate
+    } else {
+        [string](Get-ObjectPropertyValue $Candidate @('src', 'localPath', 'path', 'url', 'data'))
+    }
+    $value = $value.Trim(' ', '"', "'", '<', '>')
+    if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+
+    if ($value -match '^data:(?<mime>image/(?:png|jpeg|gif|webp|avif));base64,(?<data>.+)$') {
+        return [ordered]@{ src = $value; type = 'data'; mimeType = $Matches['mime'].ToLowerInvariant() }
+    }
+    if ($value -match '^data:image/') { return $null }
+
+    if ($value -match '^https?://') {
+        try {
+            $uri = [System.Uri]::new($value)
+            if ($uri.AbsolutePath -match '\.svg$') { return $null }
+        } catch {
+            return $null
+        }
+        return [ordered]@{ src = $value; type = 'url' }
+    }
+
+    if ($DisableLocalPathImages) { return $null }
+
+    if ($value -match '^file://') {
+        try { $value = ([System.Uri]::new($value)).LocalPath } catch { return $null }
+    }
+    try {
+        $path = if ([System.IO.Path]::IsPathRooted($value)) {
+            [System.IO.Path]::GetFullPath($value)
+        } elseif (-not [string]::IsNullOrWhiteSpace($Cwd) -and $Cwd -ne '(未知工作目录)') {
+            [System.IO.Path]::GetFullPath((Join-Path $Cwd $value))
+        } else {
+            return $null
+        }
+    } catch {
+        return $null
+    }
+    $mimeType = Get-SupportedImageMimeType $path
+    if ([string]::IsNullOrWhiteSpace($mimeType) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $file = Get-Item -LiteralPath $path
+    $resolved = [ordered]@{
+        imageId = Get-DetailShardSuffix $file.FullName
+        type = 'local'
+        localPath = $file.FullName
+        name = $file.Name
+        mimeType = $mimeType
+        sizeBytes = [int64]$file.Length
+    }
+    if ([int64]$file.Length -gt [int64]$script:MaxLocalImageBytes) {
+        $resolved.status = 'too-large'
+    }
+    return $resolved
+}
+
+function Add-ResolvedUserEventImages {
+    param(
+        [AllowNull()]$Events,
+        [AllowNull()][string]$Cwd
+    )
+    foreach ($event in @($Events)) {
+        if ($null -eq $event -or [string](Get-ObjectPropertyValue $event @('kind')) -ne 'user') { continue }
+        $candidates = [System.Collections.Generic.List[object]]::new()
+        foreach ($candidate in @(Get-ReaderEventImages $event)) { [void]$candidates.Add($candidate) }
+        $rawText = [string](Get-ObjectPropertyValue $event @('rawText', 'summary'))
+        foreach ($candidate in @(Get-TextImageCandidates $rawText)) { [void]$candidates.Add($candidate) }
+
+        $resolvedImages = [System.Collections.Generic.List[object]]::new()
+        $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($candidate in $candidates) {
+            $resolved = Resolve-ImageCandidate -Candidate $candidate -Cwd $Cwd
+            if ($null -eq $resolved) { continue }
+            $dedupeValue = if ([string]$resolved.type -eq 'local') { [string]$resolved.localPath } else { [string]$resolved.src }
+            $dedupeKey = [string]$resolved.type + ':' + $dedupeValue
+            if ([string]::IsNullOrWhiteSpace($dedupeValue) -or -not $seen.Add($dedupeKey)) { continue }
+            [void]$resolvedImages.Add($resolved)
+        }
+        Set-ReaderEventImages -Event $event -Images @($resolvedImages)
+    }
 }
 
 function Test-ReaderEventHasImages {
@@ -245,21 +470,72 @@ function Test-ReaderEventHasImages {
     return @($Event.images).Count -gt 0
 }
 
-function Test-IsInjectedCodexContextMessage {
-    param(
-        [AllowNull()][string]$RawText,
-        [bool]$HasImages = $false
-    )
-    if ($HasImages) { return $false }
-    if ([string]::IsNullOrWhiteSpace($RawText)) { return $false }
-    $text = $RawText.Trim()
-    if ($text -match '(?s)^# AGENTS\.md instructions for .+?<INSTRUCTIONS>.*?</INSTRUCTIONS>') { return $true }
-    if ($text -match '(?s)^<environment_context>.*?</environment_context>$') { return $true }
-    if ($text -match '(?s)^<permissions instructions>.*?</permissions instructions>$') { return $true }
-    if ($text -match '(?s)^<collaboration_mode>.*?</collaboration_mode>$') { return $true }
-    if ($text -match '(?s)^<skills_instructions>.*?</skills_instructions>$') { return $true }
-    if ($text -match '(?s)^<app-context>.*?</app-context>$') { return $true }
-    return $false
+$script:CodexInjectedContextTagNames = @(
+    'recommended_plugins',
+    'environment_context',
+    'app-context',
+    'permissions instructions',
+    'collaboration_mode',
+    'skills_instructions',
+    'apps_instructions',
+    'plugins_instructions',
+    'subagent_notification',
+    'turn_aborted'
+)
+
+function Remove-CodexInjectedContextPrefix {
+    param([AllowNull()][string]$RawText)
+
+    $text = if ($null -eq $RawText) { '' } else { [string]$RawText }
+    $cursor = 0
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $cursor++ }
+    while ($cursor -lt $text.Length -and [char]::IsWhiteSpace($text[$cursor])) { $cursor++ }
+
+    $changed = $false
+    $removedBlockCount = 0
+    while ($cursor -lt $text.Length) {
+        $blockEnd = -1
+        foreach ($tagName in $script:CodexInjectedContextTagNames) {
+            $openTag = '<' + $tagName + '>'
+            if ($cursor + $openTag.Length -gt $text.Length) { continue }
+            if ($text.Substring($cursor, $openTag.Length) -cne $openTag) { continue }
+            $closeTag = '</' + $tagName + '>'
+            $closeIndex = $text.IndexOf($closeTag, $cursor + $openTag.Length, [System.StringComparison]::Ordinal)
+            if ($closeIndex -ge 0) {
+                $blockEnd = $closeIndex + $closeTag.Length
+            }
+            break
+        }
+
+        if ($blockEnd -lt 0) {
+            $agentsHeader = '# AGENTS.md instructions for '
+            if ($cursor + $agentsHeader.Length -le $text.Length -and $text.Substring($cursor, $agentsHeader.Length) -ceq $agentsHeader) {
+                $instructionsOpen = '<INSTRUCTIONS>'
+                $instructionsClose = '</INSTRUCTIONS>'
+                $openIndex = $text.IndexOf($instructionsOpen, $cursor + $agentsHeader.Length, [System.StringComparison]::Ordinal)
+                if ($openIndex -ge 0) {
+                    $closeIndex = $text.IndexOf($instructionsClose, $openIndex + $instructionsOpen.Length, [System.StringComparison]::Ordinal)
+                    if ($closeIndex -ge 0) {
+                        $blockEnd = $closeIndex + $instructionsClose.Length
+                    }
+                }
+            }
+        }
+
+        if ($blockEnd -lt 0) { break }
+        $changed = $true
+        $removedBlockCount++
+        $cursor = $blockEnd
+        while ($cursor -lt $text.Length -and [char]::IsWhiteSpace($text[$cursor])) { $cursor++ }
+    }
+
+    $remaining = if ($changed) { $text.Substring($cursor).Trim() } else { $text }
+    return [pscustomobject]@{
+        Text = $remaining
+        Changed = $changed
+        FullyInjected = $changed -and [string]::IsNullOrWhiteSpace($remaining)
+        RemovedBlockCount = $removedBlockCount
+    }
 }
 
 function Get-NormalizedUserMessageSignature {
@@ -306,6 +582,336 @@ function Test-IsDuplicateAdjacentUserEvent {
         }
     }
     return $false
+}
+
+function ConvertTo-CodexDateTimeOffset {
+    param([AllowNull()]$Value)
+    if ($null -eq $Value) { return $null }
+    try {
+        if ($Value -is [DateTimeOffset]) { return $Value.ToUniversalTime() }
+        if ($Value -is [DateTime]) {
+            return ([DateTimeOffset]$Value).ToUniversalTime()
+        }
+        $text = ([string]$Value).Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+        return [DateTimeOffset]::Parse(
+            $text,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime()
+    } catch {
+        return $null
+    }
+}
+
+function ConvertFrom-CodexUnixTime {
+    param([AllowNull()]$Value)
+    if ($null -eq $Value) { return $null }
+    try {
+        $text = ([string]$Value).Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+        $number = [decimal]0
+        if (-not [decimal]::TryParse(
+            $text,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$number
+        )) { return $null }
+        if ($number -lt 0) { return $null }
+        $milliseconds = if ([decimal]::Abs($number) -ge 100000000000) {
+            [int64][Math]::Round([double]$number, [MidpointRounding]::AwayFromZero)
+        } else {
+            [int64][Math]::Round(([double]$number * 1000), [MidpointRounding]::AwayFromZero)
+        }
+        $result = [DateTimeOffset]::FromUnixTimeMilliseconds($milliseconds).ToUniversalTime()
+        if ($result.Year -lt 2000 -or $result.Year -gt 2200) { return $null }
+        return $result
+    } catch {
+        return $null
+    }
+}
+
+function ConvertFrom-CodexUuidV7Time {
+    param([AllowNull()][string]$Value)
+    $text = ([string]$Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    if ($text.StartsWith('msg_', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $text = $text.Substring(4)
+    }
+    if ($text -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
+        return $null
+    }
+    try {
+        $milliseconds = [Convert]::ToInt64(($text.Substring(0, 8) + $text.Substring(9, 4)), 16)
+        $result = [DateTimeOffset]::FromUnixTimeMilliseconds($milliseconds).ToUniversalTime()
+        if ($result.Year -lt 2000 -or $result.Year -gt 2200) { return $null }
+        return $result
+    } catch {
+        return $null
+    }
+}
+
+function Add-CodexTimeSecondsSafe {
+    param([AllowNull()]$Value, [double]$Seconds)
+    if ($null -eq $Value) { return $null }
+    try {
+        return ([DateTimeOffset]$Value).AddSeconds($Seconds)
+    } catch {
+        return $null
+    }
+}
+
+function Get-CodexEntryTurnId {
+    param(
+        [AllowNull()]$Entry,
+        [AllowNull()][string]$CurrentTurnId = '',
+        [switch]$AllowCurrentTurnFallback
+    )
+    if ($null -eq $Entry) { return '' }
+    foreach ($candidate in @(
+        (Get-ObjectPropertyValue $Entry @('turn_id')),
+        (Get-ObjectPropertyValue $Entry.payload @('turn_id')),
+        (Get-ObjectPropertyValue $Entry.payload.item @('turn_id')),
+        (Get-ObjectPropertyValue $Entry.payload.internal_chat_message_metadata_passthrough @('turn_id'))
+    )) {
+        $text = ([string]$candidate).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($text)) { return $text }
+    }
+    if ($AllowCurrentTurnFallback) { return ([string]$CurrentTurnId).Trim() }
+    return ''
+}
+
+function Test-CodexUserCandidateIntervalSafe {
+    param(
+        [System.Collections.Generic.HashSet[int]]$BarrierOrdinals,
+        [int]$LowOrdinal,
+        [int]$HighOrdinal
+    )
+    if ($HighOrdinal - $LowOrdinal -gt 2) { return $false }
+    if ($HighOrdinal - $LowOrdinal -le 1) { return $true }
+    foreach ($ordinal in (($LowOrdinal + 1)..($HighOrdinal - 1))) {
+        if ($BarrierOrdinals.Contains($ordinal)) { return $false }
+    }
+    return $true
+}
+
+function Test-CodexAssistantWrapperCluster {
+    param(
+        [hashtable]$WrappersByOrdinal,
+        [int]$LowOrdinal,
+        [int]$HighOrdinal,
+        [AllowNull()][string]$TurnId,
+        [AllowNull()][string]$RawText,
+        [string]$EventKind,
+        [string[]]$StableItemIds = @()
+    )
+    if ($HighOrdinal - $LowOrdinal -gt 3) { return $false }
+    if ($HighOrdinal - $LowOrdinal -le 1) { return $false }
+    $stableIds = @($StableItemIds | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    $normalizedText = ([string]$RawText).Trim()
+    $expectedPhase = switch ($EventKind) {
+        'assistant_commentary' { 'commentary' }
+        'assistant_final' { 'final_answer' }
+        default { '' }
+    }
+    $matchingWrappers = 0
+    foreach ($ordinal in (($LowOrdinal + 1)..($HighOrdinal - 1))) {
+        if (-not $WrappersByOrdinal.ContainsKey($ordinal)) { return $false }
+        $marker = $WrappersByOrdinal[$ordinal]
+        $markerTurnId = ([string]$marker.TurnId).Trim()
+        $markerStableId = ([string]$marker.StableItemId).Trim()
+        $stableIdMatch = $stableIds.Count -gt 0 -and $stableIds -contains $markerStableId
+        if ($stableIdMatch) {
+            if (-not [string]::IsNullOrWhiteSpace($markerTurnId) -and $markerTurnId -ne [string]$TurnId) { return $false }
+            $matchingWrappers++
+            continue
+        }
+        if (
+            [string]::IsNullOrWhiteSpace($expectedPhase) -or
+            ([string]$marker.Phase).Trim() -ne $expectedPhase -or
+            [string]::IsNullOrWhiteSpace($normalizedText) -or
+            ([string]$marker.RawText).Trim() -ne $normalizedText -or
+            $markerTurnId -ne [string]$TurnId
+        ) { return $false }
+        $matchingWrappers++
+    }
+    return $matchingWrappers -gt 0
+}
+
+function Get-CodexContentText {
+    param([AllowNull()]$Content)
+    if ($null -eq $Content) { return '' }
+    if ($Content -is [string]) { return ([string]$Content).Trim() }
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($part in @($Content)) {
+        if ($null -eq $part) { continue }
+        if ($part -is [string]) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$part)) { $parts.Add([string]$part) }
+            continue
+        }
+        $type = ([string](Get-ObjectPropertyValue $part @('type'))).ToLowerInvariant()
+        $text = Get-ObjectPropertyValue $part @('text', 'output_text', 'input_text')
+        if ($type -in @('text', 'input_text', 'output_text', 'inputtext', 'outputtext') -and -not [string]::IsNullOrWhiteSpace([string]$text)) {
+            $parts.Add([string]$text)
+        }
+    }
+    return (@($parts) -join "`n").Trim()
+}
+
+function Get-CodexOutputSequenceText {
+    param([AllowNull()]$Content)
+    if ($null -eq $Content) { return '' }
+    if ($Content -is [string]) { return [string]$Content }
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($part in @($Content)) {
+        if ($null -eq $part) { continue }
+        if ($part -is [string]) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$part)) { $parts.Add([string]$part) }
+            continue
+        }
+        $type = ([string](Get-ObjectPropertyValue $part @('type'))).ToLowerInvariant()
+        $text = Get-ObjectPropertyValue $part @('text')
+        if ($type -in @('text', 'input_text', 'output_text', 'inputtext', 'outputtext') -and -not [string]::IsNullOrWhiteSpace([string]$text)) {
+            $parts.Add([string]$text)
+        } else {
+            $serialized = Convert-ToCompactJsonText $part
+            if (-not [string]::IsNullOrWhiteSpace($serialized)) { $parts.Add($serialized) }
+        }
+    }
+    return (@($parts) -join "`n").Trim()
+}
+
+function New-CodexEventCandidate {
+    param(
+        $Event,
+        [int]$RawLineOrdinal,
+        [string]$WrapperSource,
+        [AllowNull()][string]$StableItemId = '',
+        [AllowNull()]$TopTimestamp,
+        [AllowNull()]$ItemStartedAt,
+        [AllowNull()]$ItemCompletedAt,
+        [AllowNull()]$CreateTime,
+        [AllowNull()][string]$UserMessageId = '',
+        [switch]$AuthoritativeTool
+    )
+    [pscustomobject]@{
+        Event = $Event
+        RawLineOrdinal = $RawLineOrdinal
+        WrapperSource = $WrapperSource
+        StableItemId = ([string]$StableItemId).Trim()
+        TopUtc = ConvertTo-CodexDateTimeOffset $TopTimestamp
+        ItemStartedUtc = ConvertFrom-CodexUnixTime $ItemStartedAt
+        ItemCompletedUtc = ConvertFrom-CodexUnixTime $ItemCompletedAt
+        CreateUtc = ConvertFrom-CodexUnixTime $CreateTime
+        UserUuidUtc = ConvertFrom-CodexUuidV7Time $UserMessageId
+        AuthoritativeTool = [bool]$AuthoritativeTool
+    }
+}
+
+function Test-CodexCandidateTimeWithinTask {
+    param(
+        [AllowNull()]$Value,
+        [AllowNull()]$Task,
+        [AllowNull()]$PreviousTask,
+        [AllowNull()]$NextTask
+    )
+    if ($null -eq $Value) { return $false }
+    if ($null -eq $Task) { return $true }
+    $started = $Task.StartedUtc
+    $completed = $Task.CompletedUtc
+    if ($null -ne $started -and $null -ne $completed -and $started -gt $completed) {
+        $started = $null
+        $completed = $null
+    }
+    $lower = Add-CodexTimeSecondsSafe $started -5
+    $upper = Add-CodexTimeSecondsSafe $completed 5
+    if ($null -eq $lower -and $null -ne $PreviousTask -and $null -ne $PreviousTask.CompletedUtc) {
+        $lower = Add-CodexTimeSecondsSafe $PreviousTask.CompletedUtc -5
+    }
+    if ($null -eq $upper -and $null -ne $NextTask -and $null -ne $NextTask.StartedUtc) {
+        $upper = Add-CodexTimeSecondsSafe $NextTask.StartedUtc 5
+    }
+    if ($null -ne $lower -and $Value -lt $lower) { return $false }
+    if ($null -ne $upper -and $Value -gt $upper) { return $false }
+    return $true
+}
+
+function Get-CodexResolvedCandidateTime {
+    param(
+        $Candidate,
+        [AllowNull()]$Task,
+        [AllowNull()]$PreviousTask,
+        [AllowNull()]$NextTask,
+        [int]$TurnFinalCount = 0
+    )
+    $event = $Candidate.Event
+    $taskRangeValid = -not (
+        $null -ne $Task -and
+        $null -ne $Task.StartedUtc -and
+        $null -ne $Task.CompletedUtc -and
+        $Task.StartedUtc -gt $Task.CompletedUtc
+    )
+    $itemStarted = $Candidate.ItemStartedUtc
+    $itemCompleted = $Candidate.ItemCompletedUtc
+    if ($null -ne $itemStarted -and $null -ne $itemCompleted -and $itemStarted -gt $itemCompleted) {
+        $itemStarted = $null
+        $itemCompleted = $null
+    }
+    $valid = {
+        param($value)
+        if (Test-CodexCandidateTimeWithinTask $value $Task $PreviousTask $NextTask) { return $value }
+        return $null
+    }
+    $started = & $valid $itemStarted
+    $completed = & $valid $itemCompleted
+    $created = & $valid $Candidate.CreateUtc
+    $uuid = & $valid $Candidate.UserUuidUtc
+    $top = & $valid $Candidate.TopUtc
+
+    if ([string]$event.kind -eq 'system' -and [string]$event.summary -eq 'task_started') {
+        if ($taskRangeValid -and $null -ne $Task -and $null -ne $Task.StartedUtc) { return $Task.StartedUtc }
+        return $top
+    }
+    if ([string]$event.kind -eq 'system' -and [string]$event.summary -eq 'task_complete') {
+        if ($null -ne $Task -and $null -ne $Task.CompletedUtc) { return $Task.CompletedUtc }
+        return $top
+    }
+    if ([string]$event.kind -eq 'user') {
+        foreach ($value in @($started, $completed, $created, $uuid)) {
+            if ($null -ne $value) { return $value }
+        }
+        if ($null -ne $top) { return $top }
+        if ($taskRangeValid -and $null -ne $Task -and $null -ne $Task.StartedUtc) { return $Task.StartedUtc }
+        if ($null -ne $Task -and $null -ne $Task.TurnUuidUtc) { return $Task.TurnUuidUtc }
+        return $null
+    }
+    if ([string]$event.kind -eq 'assistant_final') {
+        foreach ($value in @($completed, $started, $created)) {
+            if ($null -ne $value) { return $value }
+        }
+        if ($null -ne $top) { return $top }
+        if ($taskRangeValid -and $null -ne $Task -and $null -ne $Task.CompletedUtc) {
+            $matchesLast = -not [string]::IsNullOrWhiteSpace([string]$Task.LastAgentMessage) -and
+                ([string]$Task.LastAgentMessage).Trim() -eq ([string]$event.rawText).Trim()
+            if ($matchesLast -or $TurnFinalCount -eq 1) { return $Task.CompletedUtc }
+        }
+        return $null
+    }
+    foreach ($value in @($completed, $started, $created)) {
+        if ($null -ne $value) { return $value }
+    }
+    return $top
+}
+
+function Set-CodexResolvedEventTime {
+    param($Event, [AllowNull()]$Value)
+    if ($null -eq $Value) {
+        $Event.timestamp = ''
+        $Event.timestampLocal = ''
+        return
+    }
+    $Event.timestamp = ([DateTimeOffset]$Value).ToUniversalTime().ToString('o')
+    $Event.timestampLocal = ([DateTimeOffset]$Value).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')
 }
 
 function New-SkippedReaderSession {
@@ -391,6 +997,147 @@ function Get-SafeSourceId {
     return $candidate
 }
 
+function Get-LocalSourceLabel {
+    param(
+        [string]$SourceType,
+        [AllowNull()][string]$MachineName
+    )
+    $baseLabel = if ($SourceType -eq 'local-claude') { '本机 Claude' } else { '本机 Codex' }
+    $normalizedMachineName = ([string]$MachineName).Trim()
+    if ([string]::IsNullOrWhiteSpace($normalizedMachineName)) { return $baseLabel }
+    return $normalizedMachineName + '-' + $baseLabel
+}
+
+function Get-SourceCapabilities {
+    param([string]$SourceType)
+
+    if ($SourceType -in @('local-codex', 'local-claude')) {
+        return [ordered]@{
+            canRefresh = $true
+            canQuickRefresh = $true
+            canRebuild = $true
+            canUpload = $true
+            canDownload = $false
+            canResume = $true
+            canReply = $true
+            canEditNotes = $true
+            canResolveLocalImages = $true
+            isReadOnly = $false
+        }
+    }
+    if ($SourceType -in @('webdav-codex', 'webdav-claude')) {
+        return [ordered]@{
+            canRefresh = $false
+            canQuickRefresh = $false
+            canRebuild = $true
+            canUpload = $false
+            canDownload = $true
+            canResume = $false
+            canReply = $false
+            canEditNotes = $false
+            canResolveLocalImages = $false
+            isReadOnly = $true
+        }
+    }
+    return [ordered]@{
+        canRefresh = $true
+        canQuickRefresh = $true
+        canRebuild = $true
+        canUpload = $false
+        canDownload = $false
+        canResume = $false
+        canReply = $false
+        canEditNotes = $true
+        canResolveLocalImages = $true
+        isReadOnly = $false
+    }
+}
+
+function Get-RelativeSyncPath {
+    param(
+        [string]$Root,
+        [string]$Path,
+        [string]$Prefix
+    )
+    $relative = [System.IO.Path]::GetRelativePath(
+        [System.IO.Path]::GetFullPath($Root),
+        [System.IO.Path]::GetFullPath($Path)
+    ).Replace('\', '/')
+    if ([string]::IsNullOrWhiteSpace($relative) -or $relative -eq '.' -or $relative.StartsWith('../')) {
+        throw "Unable to create a safe sync logical path for: $Path"
+    }
+    return ($Prefix.Trim('/') + '/' + $relative.TrimStart('/'))
+}
+
+function New-SyncInventoryFileEntry {
+    param(
+        [System.IO.FileInfo]$File,
+        [string]$SourceType,
+        [string]$SessionRoot,
+        [string]$ArchiveRoot,
+        [string]$ClaudeHome,
+        [string]$ClaudeSessionsRoot
+    )
+    if ($null -eq $File) { return $null }
+    $filePath = [System.IO.Path]::GetFullPath($File.FullName)
+    $logicalPath = ''
+    $rootKind = ''
+    $recordFormat = if ($File.Extension -ieq '.json') { 'json' } else { 'jsonl' }
+    $archived = $false
+    $entrypoint = ''
+
+    if ($SourceType -eq 'local-codex') {
+        if (Test-PathWithinDirectory -Path $filePath -Directory $SessionRoot) {
+            $logicalPath = Get-RelativeSyncPath -Root $SessionRoot -Path $filePath -Prefix 'sessions'
+            $rootKind = 'sessions'
+        } elseif (Test-PathWithinDirectory -Path $filePath -Directory $ArchiveRoot) {
+            $logicalPath = Get-RelativeSyncPath -Root $ArchiveRoot -Path $filePath -Prefix 'archived_sessions'
+            $rootKind = 'archived_sessions'
+            $archived = $true
+        } else {
+            throw "Codex sync file is outside the supported roots: $filePath"
+        }
+    } elseif ($SourceType -eq 'local-claude') {
+        $claudeProjectsRoot = Join-Path $ClaudeHome 'projects'
+        if (Test-PathWithinDirectory -Path $filePath -Directory $claudeProjectsRoot) {
+            $logicalPath = Get-RelativeSyncPath -Root $claudeProjectsRoot -Path $filePath -Prefix 'projects'
+            $rootKind = 'projects'
+            $entrypoint = 'cli'
+        } elseif (Test-PathWithinDirectory -Path $filePath -Directory $ClaudeSessionsRoot) {
+            $logicalPath = Get-RelativeSyncPath -Root $ClaudeSessionsRoot -Path $filePath -Prefix 'sessions_metadata'
+            $rootKind = 'sessions_metadata'
+            $entrypoint = 'cli'
+        } else {
+            $pathHashBytes = [System.Text.Encoding]::UTF8.GetBytes($filePath.ToLowerInvariant())
+            $pathHash = ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::HashData($pathHashBytes))).Replace('-', '').ToLowerInvariant().Substring(0, 12)
+            $recognizedTail = if ($filePath -match '(?i)(local-agent-mode-sessions[\\/].+[\\/]\.claude[\\/]projects[\\/].+\.jsonl)$') {
+                $Matches[1].Replace('\', '/')
+            } elseif ($filePath -match '(?i)(AndrePimenta\.claude-code-chat[\\/]conversations[\\/].+\.json)$') {
+                $Matches[1].Replace('\', '/')
+            } else {
+                throw "Claude sync file is outside the supported parser roots: $filePath"
+            }
+            $logicalPath = 'claude_desktop/' + $pathHash + '/' + $recognizedTail
+            $rootKind = 'claude_desktop'
+            $entrypoint = 'claude-desktop-3p'
+        }
+    } else {
+        throw "Sync inventory is only supported for local-codex and local-claude."
+    }
+
+    return [ordered]@{
+        absolutePath = $filePath
+        logicalPath = $logicalPath
+        originPath = $filePath
+        sizeBytes = [int64]$File.Length
+        lastWriteTimeUtc = $File.LastWriteTimeUtc.ToUniversalTime().ToString('o')
+        rootKind = $rootKind
+        recordFormat = $recordFormat
+        archived = $archived
+        entrypoint = $entrypoint
+    }
+}
+
 function Update-SourceManifest {
     param(
         [string]$RuntimeDataRoot,
@@ -412,7 +1159,7 @@ function Update-SourceManifest {
     if (-not $localExists) {
         [void]$sources.Insert(0, [ordered]@{
             id = 'local-codex'
-            label = '本机 Codex'
+            label = Get-LocalSourceLabel -SourceType 'local-codex' -MachineName $MachineName
             type = 'local-codex'
             roots = @(
                 (Join-Path $CodexHome 'sessions'),
@@ -425,11 +1172,22 @@ function Update-SourceManifest {
     if (-not $localClaudeExists) {
         [void]$sources.Insert([Math]::Min(1, $sources.Count), [ordered]@{
             id = 'local-claude'
-            label = '本机 Claude'
+            label = Get-LocalSourceLabel -SourceType 'local-claude' -MachineName $MachineName
             type = 'local-claude'
             root = (Join-Path $ClaudeHome 'projects')
             sessionsRoot = (Join-Path $ClaudeHome 'sessions')
         })
+    }
+
+    foreach ($item in $sources) {
+        $itemId = [string](Get-ObjectPropertyValue $item @('id'))
+        if ($itemId -notin @('local-codex', 'local-claude')) { continue }
+        $label = Get-LocalSourceLabel -SourceType $itemId -MachineName $MachineName
+        if ($item -is [System.Collections.IDictionary]) {
+            $item['label'] = $label
+        } else {
+            $item | Add-Member -NotePropertyName label -NotePropertyValue $label -Force
+        }
     }
 
     $nextSources = [System.Collections.Generic.List[object]]::new()
@@ -459,9 +1217,32 @@ function Get-SessionDetailFileName {
     return ([string]$Session.Id + '-' + (Get-DetailShardSuffix ([string]$Session.Path)) + '.json')
 }
 
-function Get-SessionSearchText {
-    param($Session)
-    $parts = [System.Collections.Generic.List[string]]::new()
+function Get-BoundedSearchExcerpt {
+    param(
+        [AllowNull()][string]$Text,
+        [int64]$MaxChars
+    )
+    if ([string]::IsNullOrEmpty($Text) -or $MaxChars -le 0) { return "" }
+    $clean = ([string]$Text -replace "`0", "")
+    if ([int64]$clean.Length -le $MaxChars) { return $clean }
+    if ($MaxChars -eq 1) { return $clean.Substring(0, 1) }
+
+    $separator = "`n"
+    $contentChars = $MaxChars - $separator.Length
+    $headChars = [int][Math]::Ceiling($contentChars / 2.0)
+    $tailChars = [int]($contentChars - $headChars)
+    return $clean.Substring(0, $headChars) + $separator + $clean.Substring($clean.Length - $tailChars, $tailChars)
+}
+
+function Get-SessionSearchParts {
+    param(
+        $Session,
+        [int64]$ToolRawEventCharLimit = $script:ToolRawSearchEventCharLimit,
+        [int64]$ToolRawSessionCharLimit = $script:ToolRawSearchSessionCharLimit
+    )
+    $questionTexts = [System.Collections.Generic.List[string]]::new()
+    $otherBaseParts = [System.Collections.Generic.List[string]]::new()
+    $toolRawParts = [System.Collections.Generic.List[string]]::new()
     foreach ($value in @(
         $Session.Title,
         $Session.Summary,
@@ -471,28 +1252,174 @@ function Get-SessionSearchText {
         $Session.ModelProvider
     )) {
         if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
-            [void]$parts.Add([string]$value)
+            [void]$otherBaseParts.Add([string]$value)
         }
     }
 
-    foreach ($event in @($Session.Events)) {
+    $events = @($Session.Events)
+    $toolRawEvents = @($events | Where-Object {
+        $null -ne $_ -and [string]$_.kind -eq 'tool' -and -not [string]::IsNullOrWhiteSpace([string]$_.rawText)
+    })
+    $toolRawSeparatorChars = [Math]::Max(0, $toolRawEvents.Count - 1)
+    $toolRawAvailableChars = [Math]::Max(0, $ToolRawSessionCharLimit - $toolRawSeparatorChars)
+    $toolRawEventBudget = if ($toolRawEvents.Count -gt 0) {
+        [Math]::Min($ToolRawEventCharLimit, [Math]::Floor($toolRawAvailableChars / $toolRawEvents.Count))
+    } else {
+        0
+    }
+    $toolRawOriginalChars = [int64]0
+    $toolRawTruncatedEvents = 0
+
+    foreach ($event in $events) {
         if ($null -eq $event) { continue }
+        if ([string]$event.kind -eq 'user') {
+            $questionText = if (-not [string]::IsNullOrWhiteSpace([string]$event.rawText)) {
+                [string]$event.rawText
+            } else {
+                [string]$event.summary
+            }
+            if (-not [string]::IsNullOrWhiteSpace($questionText)) {
+                [void]$questionTexts.Add(($questionText -replace "`0", ""))
+            }
+            foreach ($value in @($event.kind, $event.phase, $event.role, $event.toolName, $event.status)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+                    [void]$otherBaseParts.Add([string]$value)
+                }
+            }
+            continue
+        }
         foreach ($value in @(
             $event.kind,
             $event.phase,
             $event.role,
             $event.toolName,
             $event.status,
-            $event.summary,
-            $event.rawText
+            $event.summary
         )) {
             if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
-                [void]$parts.Add([string]$value)
+                [void]$otherBaseParts.Add([string]$value)
+            }
+        }
+        if ([string]$event.kind -eq 'tool') {
+            $rawText = ([string]$event.rawText -replace "`0", "")
+            if (-not [string]::IsNullOrWhiteSpace($rawText)) {
+                $toolRawOriginalChars += $rawText.Length
+                $excerpt = Get-BoundedSearchExcerpt -Text $rawText -MaxChars $toolRawEventBudget
+                if ($excerpt.Length -lt $rawText.Length) { $toolRawTruncatedEvents++ }
+                if (-not [string]::IsNullOrWhiteSpace($excerpt)) { [void]$toolRawParts.Add($excerpt) }
+            }
+            continue
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$event.rawText)) {
+            [void]$otherBaseParts.Add([string]$event.rawText)
+        }
+    }
+
+    $otherBaseText = (($otherBaseParts -join "`n") -replace "`0", "")
+    $toolRawText = (($toolRawParts -join "`n") -replace "`0", "")
+    $otherText = (@($otherBaseText, $toolRawText) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+    return [pscustomobject]@{
+        QuestionTexts = @($questionTexts)
+        OtherBaseText = $otherBaseText
+        ToolRawText = $toolRawText
+        OtherText = $otherText
+        ToolRawOriginalChars = $toolRawOriginalChars
+        ToolRawIndexedChars = [int64]$toolRawText.Length
+        ToolRawTruncatedEvents = $toolRawTruncatedEvents
+    }
+}
+
+function Set-SessionSearchFields {
+    param(
+        $Session,
+        [int64]$ToolRawEventCharLimit = $script:ToolRawSearchEventCharLimit,
+        [int64]$ToolRawSessionCharLimit = $script:ToolRawSearchSessionCharLimit
+    )
+    $parts = Get-SessionSearchParts -Session $Session -ToolRawEventCharLimit $ToolRawEventCharLimit -ToolRawSessionCharLimit $ToolRawSessionCharLimit
+    $Session | Add-Member -NotePropertyName QuestionSearchTexts -NotePropertyValue @($parts.QuestionTexts) -Force
+    $Session | Add-Member -NotePropertyName OtherSearchBaseText -NotePropertyValue ([string]$parts.OtherBaseText) -Force
+    $Session | Add-Member -NotePropertyName ToolRawSearchText -NotePropertyValue ([string]$parts.ToolRawText) -Force
+    $Session | Add-Member -NotePropertyName OtherSearchText -NotePropertyValue ([string]$parts.OtherText) -Force
+    $Session | Add-Member -NotePropertyName ToolRawSearchOriginalChars -NotePropertyValue ([int64]$parts.ToolRawOriginalChars) -Force
+    $Session | Add-Member -NotePropertyName ToolRawSearchTruncatedEvents -NotePropertyValue ([int]$parts.ToolRawTruncatedEvents) -Force
+    return $Session
+}
+
+function Set-GlobalSearchTextLimits {
+    param(
+        [object[]]$Sessions,
+        [int64]$ToolRawGlobalCharLimit = $script:ToolRawSearchGlobalCharLimit,
+        [int64]$SearchTextGlobalCharLimit = $script:SearchTextGlobalCharLimit
+    )
+    $sessionList = @($Sessions)
+    $questionChars = [int64]0
+    $otherBaseChars = [int64]0
+    $toolRawOriginalChars = [int64]0
+    $toolRawBeforeGlobalChars = [int64]0
+    $toolRawTruncatedEvents = 0
+    foreach ($session in $sessionList) {
+        foreach ($questionText in @($session.QuestionSearchTexts)) { $questionChars += ([string]$questionText).Length }
+        $otherBaseChars += ([string]$session.OtherSearchBaseText).Length
+        $toolRawOriginalChars += [int64]$session.ToolRawSearchOriginalChars
+        $toolRawBeforeGlobalChars += ([string]$session.ToolRawSearchText).Length
+        $toolRawTruncatedEvents += [int]$session.ToolRawSearchTruncatedEvents
+    }
+
+    $requiredBaseChars = $questionChars + $otherBaseChars
+    if ($requiredBaseChars -gt $SearchTextGlobalCharLimit) {
+        throw ("Search text excluding tool raw output is too large ({0:N0} characters; safety limit {1:N0}). " +
+            "Tool output is already excluded from this measurement. Split the source or upgrade the search storage format.") -f `
+            $requiredBaseChars, $SearchTextGlobalCharLimit
+    }
+
+    $availableToolChars = [Math]::Max(0, $SearchTextGlobalCharLimit - $requiredBaseChars)
+    $effectiveToolLimit = [Math]::Min([int64]$ToolRawGlobalCharLimit, [int64]$availableToolChars)
+    if ($toolRawBeforeGlobalChars -gt $effectiveToolLimit) {
+        $nonEmptyToolSessions = @($sessionList | Where-Object { ([string]$_.ToolRawSearchText).Length -gt 0 })
+        $remainingBudget = [int64]$effectiveToolLimit
+        $remainingCount = $nonEmptyToolSessions.Count
+        $fairLimit = [int64]0
+        foreach ($session in @($nonEmptyToolSessions | Sort-Object { ([string]$_.ToolRawSearchText).Length })) {
+            if ($remainingCount -le 0) { break }
+            $share = [int64][Math]::Floor($remainingBudget / $remainingCount)
+            $length = ([string]$session.ToolRawSearchText).Length
+            if ($length -le $share) {
+                $remainingBudget -= $length
+                $remainingCount--
+                continue
+            }
+            $fairLimit = $share
+            break
+        }
+        foreach ($session in $nonEmptyToolSessions) {
+            $text = [string]$session.ToolRawSearchText
+            if ($text.Length -gt $fairLimit) {
+                $session | Add-Member -NotePropertyName ToolRawSearchText `
+                    -NotePropertyValue (Get-BoundedSearchExcerpt -Text $text -MaxChars $fairLimit) -Force
             }
         }
     }
 
-    return (($parts -join "`n") -replace "`0", "")
+    $toolRawIndexedChars = [int64]0
+    foreach ($session in $sessionList) {
+        $toolRawText = [string]$session.ToolRawSearchText
+        $toolRawIndexedChars += $toolRawText.Length
+        $otherText = (@([string]$session.OtherSearchBaseText, $toolRawText) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        $session | Add-Member -NotePropertyName OtherSearchText -NotePropertyValue $otherText -Force
+    }
+
+    return [pscustomobject]@{
+        QuestionChars = $questionChars
+        OtherBaseChars = $otherBaseChars
+        ToolRawOriginalChars = $toolRawOriginalChars
+        ToolRawBeforeGlobalChars = $toolRawBeforeGlobalChars
+        ToolRawIndexedChars = $toolRawIndexedChars
+        ToolRawTruncatedEvents = $toolRawTruncatedEvents
+        TotalIndexedChars = $questionChars + $otherBaseChars + $toolRawIndexedChars
+        ToolRawGlobalLimit = $effectiveToolLimit
+        SearchTextGlobalLimit = $SearchTextGlobalCharLimit
+    }
 }
 
 function Write-Utf8FileAtomic {
@@ -583,7 +1510,7 @@ function New-SourceSignature {
     )
 
     $sourceFiles = @(Get-SourceSignatureFileEntries -Files $Files)
-    $isClaudeSource = [string]$SourceType -eq 'local-claude'
+    $isClaudeSource = [string]$SourceType -in @('local-claude', 'webdav-claude')
     return [ordered]@{
         sourceId = [string]$SourceId
         sourceType = [string]$SourceType
@@ -621,10 +1548,11 @@ function Test-BuildOutputsComplete {
         [string]$HtmlPath,
         [string]$DataPath,
         [string]$SearchPath,
+        [string]$OtherSearchPath,
         [string]$CachePath
     )
 
-    foreach ($path in @($HtmlPath, $DataPath, $SearchPath, $CachePath)) {
+    foreach ($path in @($HtmlPath, $DataPath, $SearchPath, $OtherSearchPath, $CachePath)) {
         if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
             return $false
         }
@@ -681,16 +1609,54 @@ function Add-SessionRuntimeFields {
     $Session | Add-Member -NotePropertyName SourceId -NotePropertyValue $SourceId -Force
     $Session | Add-Member -NotePropertyName LastWriteTimeUtc -NotePropertyValue $lastWriteTimeUtc -Force
     $Session | Add-Member -NotePropertyName SizeBytes -NotePropertyValue $sizeBytes -Force
-    if (-not $Cached -or -not ($Session.PSObject.Properties.Name -contains 'SearchText')) {
-        $Session | Add-Member -NotePropertyName SearchText -NotePropertyValue (Get-SessionSearchText $Session) -Force
+    if (
+        -not $Cached -or
+        -not ($Session.PSObject.Properties.Name -contains 'QuestionSearchTexts') -or
+        -not ($Session.PSObject.Properties.Name -contains 'OtherSearchBaseText') -or
+        -not ($Session.PSObject.Properties.Name -contains 'ToolRawSearchText')
+    ) {
+        [void](Set-SessionSearchFields $Session)
     }
     $Session | Add-Member -NotePropertyName Cached -NotePropertyValue $Cached -Force
     return $Session
 }
 
+function Complete-ParsedSessionForBuild {
+    param(
+        $Session,
+        [System.IO.FileInfo]$File,
+        [string]$DetailFileName,
+        [string]$DetailRoot,
+        [string]$SourceId,
+        [bool]$DeferDetailWrite
+    )
+    $runtimeSession = Add-SessionRuntimeFields -Session $Session -File $File -DetailFileName $DetailFileName -Cached $false -SourceId $SourceId
+    if ($DeferDetailWrite) { return $runtimeSession }
+
+    $detailPayload = [ordered]@{
+        id = $runtimeSession.Id
+        sourceId = [string]$runtimeSession.SourceId
+        title = $runtimeSession.Title
+        path = $runtimeSession.Path
+        cwd = $runtimeSession.Cwd
+        fileUri = $runtimeSession.FileUri
+        createdLocal = $runtimeSession.CreatedLocal
+        updatedLocal = $runtimeSession.UpdatedLocal
+        userCount = $runtimeSession.UserCount
+        assistantCount = $runtimeSession.AssistantCount
+        events = @($runtimeSession.Events)
+    }
+    Write-Utf8FileAtomic -Path (Join-Path $DetailRoot $DetailFileName) -Value ($detailPayload | ConvertTo-Json -Depth 100)
+    $runtimeSession.Events = $null
+    $runtimeSession.Cached = $true
+    return $runtimeSession
+}
+
 function New-SessionFromCacheRecord {
     param($Record)
     if ($null -eq $Record) { return $null }
+    $otherBaseText = [string]$Record.otherBaseText
+    $toolRawText = [string]$Record.toolRawText
     return [pscustomobject]@{
         Id = [string]$Record.id
         Cwd = [string]$Record.cwd
@@ -713,7 +1679,12 @@ function New-SessionFromCacheRecord {
         SizeBytes = [int64]$Record.sizeBytes
         LastWriteTimeUtc = Convert-ToCacheTimeText $Record.lastWriteTimeUtc
         DetailFileName = [string]$Record.detailFileName
-        SearchText = [string]$Record.searchText
+        QuestionSearchTexts = @($Record.questionTexts | ForEach-Object { [string]$_ })
+        OtherSearchBaseText = $otherBaseText
+        ToolRawSearchText = $toolRawText
+        OtherSearchText = (@($otherBaseText, $toolRawText) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        ToolRawSearchOriginalChars = [int64]$Record.toolRawOriginalChars
+        ToolRawSearchTruncatedEvents = [int]$Record.toolRawTruncatedEvents
         Cached = $true
         Events = $null
     }
@@ -721,6 +1692,13 @@ function New-SessionFromCacheRecord {
 
 function New-CacheRecordFromSession {
     param($Session)
+    if (
+        -not ($Session.PSObject.Properties.Name -contains 'QuestionSearchTexts') -or
+        -not ($Session.PSObject.Properties.Name -contains 'OtherSearchBaseText') -or
+        -not ($Session.PSObject.Properties.Name -contains 'ToolRawSearchText')
+    ) {
+        [void](Set-SessionSearchFields $Session)
+    }
     return [ordered]@{
         path = [string]$Session.Path
         id = [string]$Session.Id
@@ -745,7 +1723,11 @@ function New-CacheRecordFromSession {
         codexSession = $true
         hasImageReference = [bool]$Session.HasImageReference
         fileUri = [string]$Session.FileUri
-        searchText = if ($Session.PSObject.Properties.Name -contains 'SearchText') { [string]$Session.SearchText } else { Get-SessionSearchText $Session }
+        questionTexts = @($Session.QuestionSearchTexts)
+        otherBaseText = [string]$Session.OtherSearchBaseText
+        toolRawText = [string]$Session.ToolRawSearchText
+        toolRawOriginalChars = [int64]$Session.ToolRawSearchOriginalChars
+        toolRawTruncatedEvents = [int]$Session.ToolRawSearchTruncatedEvents
     }
 }
 
@@ -773,6 +1755,9 @@ function Get-ObjectPropertyValue {
     if ($null -eq $Object) { return $null }
     foreach ($name in @($Names)) {
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($name)) {
+            return $Object[$name]
+        }
         $property = $Object.PSObject.Properties[$name]
         if ($null -ne $property) { return $property.Value }
     }
@@ -937,8 +1922,10 @@ function New-ClaudeSessionFromJsonEntry {
     if ($role -eq 'user') {
         $recognizedClaudeRecordSeen = $true
         $messageText = Convert-ClaudeContentToText $content @('text')
+        $images = @(Get-ClaudeMessageContentImages $content)
         if ([string]::IsNullOrWhiteSpace($messageText) -and $content -is [string]) { $messageText = [string]$content }
-        if (-not [string]::IsNullOrWhiteSpace($messageText)) {
+        if ([string]::IsNullOrWhiteSpace($messageText) -and $images.Count -gt 0) { $messageText = '[图片]' }
+        if (-not [string]::IsNullOrWhiteSpace($messageText) -or $images.Count -gt 0) {
             if ([string]::IsNullOrWhiteSpace($firstUserMessage)) { $firstUserMessage = $messageText }
             $events.Add((New-ReaderEvent `
                 -Kind 'user' `
@@ -948,7 +1935,8 @@ function New-ClaudeSessionFromJsonEntry {
                 -Role 'user' `
                 -Summary (Get-ShortText $messageText 160) `
                 -RawText ($messageText.TrimEnd()) `
-                -RenderMode 'plain_text'))
+                -RenderMode 'plain_text' `
+                -Images $images))
         }
     } elseif ($role -eq 'assistant') {
         $recognizedClaudeRecordSeen = $true
@@ -1010,6 +1998,9 @@ function New-ClaudeSessionFromJsonEntry {
         $title = if ($MetadataSource) { $MetadataSource } else { $sessionId }
     }
 
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    $hasImageReference = @($events | Where-Object { $_.kind -eq 'user' -and (Test-ReaderEventHasImages $_) }).Count -gt 0
+
     $metadata = @{}
     if (-not [string]::IsNullOrWhiteSpace($MetadataSource)) {
         $metadata['entrypoint'] = $entrypoint
@@ -1029,7 +2020,7 @@ function New-ClaudeSessionFromJsonEntry {
         CliVersion = ""
         UserCount = @($events | Where-Object { $_.kind -eq 'user' }).Count
         AssistantCount = @($events | Where-Object { $_.kind -in @('assistant_commentary','assistant_final') }).Count
-        HasImageReference = $false
+        HasImageReference = $hasImageReference
         Archived = $false
         Path = $SourceRootHint
         FileUri = ""
@@ -1118,6 +2109,9 @@ function Read-ClaudeCodeChatConversation {
         $endTime = $File.LastWriteTimeUtc.ToString("o")
     }
 
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    $hasImageReference = @($events | Where-Object { $_.kind -eq 'user' -and (Test-ReaderEventHasImages $_) }).Count -gt 0
+
     [pscustomobject]@{
         Id = $sessionId
         Cwd = $cwd
@@ -1132,7 +2126,7 @@ function Read-ClaudeCodeChatConversation {
         CliVersion = ""
         UserCount = @($events | Where-Object { $_.kind -eq 'user' }).Count
         AssistantCount = @($events | Where-Object { $_.kind -in @('assistant_commentary','assistant_final') }).Count
-        HasImageReference = $false
+        HasImageReference = $hasImageReference
         Archived = $false
         Path = $File.FullName
         FileUri = (Convert-ToFileUri $File.FullName)
@@ -1257,8 +2251,10 @@ function Read-ClaudeSession {
                 }
 
                 $messageText = Convert-ClaudeContentToText $content @('text')
+                $images = @(Get-ClaudeMessageContentImages $content)
                 if ([string]::IsNullOrWhiteSpace($messageText) -and $content -is [string]) { $messageText = [string]$content }
-                if (-not [string]::IsNullOrWhiteSpace($messageText)) {
+                if ([string]::IsNullOrWhiteSpace($messageText) -and $images.Count -gt 0) { $messageText = '[图片]' }
+                if (-not [string]::IsNullOrWhiteSpace($messageText) -or $images.Count -gt 0) {
                     if ([string]::IsNullOrWhiteSpace($firstUserMessage)) { $firstUserMessage = $messageText }
                     $events.Add((New-ReaderEvent `
                         -Kind 'user' `
@@ -1268,7 +2264,8 @@ function Read-ClaudeSession {
                         -Role 'user' `
                         -Summary (Get-ShortText $messageText 160) `
                         -RawText ($messageText.TrimEnd()) `
-                        -RenderMode 'plain_text'))
+                        -RenderMode 'plain_text' `
+                        -Images $images))
                 }
                 continue
             }
@@ -1392,6 +2389,7 @@ function Read-ClaudeSession {
         return $null
     }
 
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
     $userEvents = @($events | Where-Object { $_.kind -eq 'user' })
     $assistantEvents = @($events | Where-Object { $_.kind -in @('assistant_commentary','assistant_final') })
     if ([string]::IsNullOrWhiteSpace($firstUserMessage) -and $userEvents.Count -gt 0) {
@@ -1403,7 +2401,7 @@ function Read-ClaudeSession {
     if ([string]::IsNullOrWhiteSpace($title)) {
         $title = $File.Name
     }
-    $hasImageReference = @($userEvents | Where-Object { [string]$_.rawText -match '\.(png|jpg|jpeg|gif|webp)\b' }).Count -gt 0
+    $hasImageReference = @($userEvents | Where-Object { Test-ReaderEventHasImages $_ }).Count -gt 0
 
     [pscustomobject]@{
         Id = $id
@@ -1428,7 +2426,7 @@ function Read-ClaudeSession {
     }
 }
 
-function Read-CodexSession {
+function Read-CodexSessionV030Fallback {
     param([System.IO.FileInfo]$File)
 
     $fileStem = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
@@ -1543,14 +2541,12 @@ function Read-CodexSession {
                 $recognizedCodexRecordSeen = $true
                 $message = Get-CodexMessageContentText $entry.payload.content
                 $images = @(Get-CodexMessageContentImages $entry.payload.content)
-                if ([string]::IsNullOrWhiteSpace($message) -and $images.Count -gt 0) {
-                    $message = "[图片]"
+                $cleanedMessage = Remove-CodexInjectedContextPrefix -RawText $message
+                $messageText = ([string]$cleanedMessage.Text).Trim()
+                if ([string]::IsNullOrWhiteSpace($messageText) -and $images.Count -gt 0) {
+                    $messageText = "[图片]"
                 }
-                if (-not [string]::IsNullOrWhiteSpace($message) -or $images.Count -gt 0) {
-                    $messageText = $message.Trim()
-                    if (Test-IsInjectedCodexContextMessage -RawText $messageText -HasImages ($images.Count -gt 0)) {
-                        continue
-                    }
+                if (-not [string]::IsNullOrWhiteSpace($messageText) -or $images.Count -gt 0) {
                     $messageTimestamp = Convert-ToUtcIsoText $entry.timestamp
                     if (Test-IsDuplicateAdjacentUserEvent -Events $events -Timestamp $messageTimestamp -RawText $messageText) {
                         continue
@@ -1561,7 +2557,7 @@ function Read-CodexSession {
                         -TimestampLocal (Convert-ToLocalTimeText $entry.timestamp) `
                         -TurnId $entryTurnId `
                         -Role 'user' `
-                        -Summary (Get-ShortText $message 160) `
+                        -Summary (Get-ShortText $messageText 160) `
                         -RawText $messageText `
                         -RenderMode 'plain_text' `
                         -Images $images))
@@ -1592,10 +2588,9 @@ function Read-CodexSession {
             if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'user_message') {
                 $recognizedCodexRecordSeen = $true
                 $message = [string]$entry.payload.message
-                $messageText = $message.Trim()
-                if (Test-IsInjectedCodexContextMessage -RawText $messageText) {
-                    continue
-                }
+                $cleanedMessage = Remove-CodexInjectedContextPrefix -RawText $message
+                $messageText = ([string]$cleanedMessage.Text).Trim()
+                if ([string]::IsNullOrWhiteSpace($messageText)) { continue }
                 $messageTimestamp = Convert-ToUtcIsoText $entry.timestamp
                 if (Test-IsDuplicateAdjacentUserEvent -Events $events -Timestamp $messageTimestamp -RawText $messageText) {
                     continue
@@ -1606,7 +2601,7 @@ function Read-CodexSession {
                     -TimestampLocal (Convert-ToLocalTimeText $entry.timestamp) `
                     -TurnId $entryTurnId `
                     -Role 'user' `
-                    -Summary (Get-ShortText $message 160) `
+                    -Summary (Get-ShortText $messageText 160) `
                     -RawText $messageText `
                     -RenderMode 'plain_text'))
                 continue
@@ -1668,6 +2663,7 @@ function Read-CodexSession {
         return $null
     }
 
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
     $userEvents = @($events | Where-Object { $_.kind -eq 'user' })
     $assistantEvents = @($events | Where-Object { $_.kind -in @('assistant_commentary','assistant_final') })
     if ($userEvents.Count -eq 0 -and $assistantEvents.Count -eq 0) {
@@ -1676,10 +2672,7 @@ function Read-CodexSession {
     $userCount = $userEvents.Count
     $assistantCount = $assistantEvents.Count
     $firstUserMessage = if ($userEvents.Count -gt 0) { [string]$userEvents[0].rawText } else { "" }
-    $hasImageReference = @($userEvents | Where-Object {
-        ([string]$_.rawText -match '\.(png|jpg|jpeg|gif|webp)\b') -or
-        (Test-ReaderEventHasImages $_)
-    }).Count -gt 0
+    $hasImageReference = @($userEvents | Where-Object { Test-ReaderEventHasImages $_ }).Count -gt 0
 
     $title = Get-FirstLine $firstUserMessage
     if ([string]::IsNullOrWhiteSpace($title)) {
@@ -1709,26 +2702,666 @@ function Read-CodexSession {
     }
 }
 
+function Read-CodexSession {
+    param([System.IO.FileInfo]$File)
+
+    $fileStem = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+    $id = $fileStem -replace '^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-', ''
+    $idLockedToFile = $id -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    $cwd = '(未知工作目录)'
+    $createdAt = ''
+    $updatedAt = ''
+    $source = ''
+    $modelProvider = ''
+    $cliVersion = ''
+    $sessionMetaSeen = $false
+    $recognizedCodexRecordSeen = $false
+    $currentTurnId = ''
+    $rawLineOrdinal = 0
+    $unassignedRecordCount = 0
+    $unrecognizedRecordCount = 0
+    $candidateEvents = [System.Collections.Generic.List[object]]::new()
+    $assistantWrappers = [System.Collections.Generic.List[object]]::new()
+    $assistantWrappersByOrdinal = @{}
+    $userDedupeBarrierOrdinals = [System.Collections.Generic.HashSet[int]]::new()
+    $customCalls = [System.Collections.Generic.List[object]]::new()
+    $customCallsByTurn = @{}
+    $pendingCustomCalls = @{}
+    $pendingTools = @{}
+    $taskByTurn = @{}
+    $taskOrder = [System.Collections.Generic.List[string]]::new()
+    $effectiveTurnOrder = [System.Collections.Generic.List[string]]::new()
+    $rolledBackTurns = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+    $stream = $null
+    $reader = $null
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $File.FullName,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+        )
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+
+        while (-not $reader.EndOfStream) {
+            $line = $reader.ReadLine()
+            $rawLineOrdinal++
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $entry = $line | ConvertFrom-Json -Depth 100
+            } catch {
+                continue
+            }
+
+            if ($entry.timestamp) { $updatedAt = $entry.timestamp }
+            if ($entry.type -eq 'session_meta') {
+                $recognizedCodexRecordSeen = $true
+                if (-not $sessionMetaSeen) {
+                    if (-not $idLockedToFile -and $entry.payload.id) { $id = [string]$entry.payload.id }
+                    if ($entry.payload.timestamp) { $createdAt = $entry.payload.timestamp }
+                    if ($entry.payload.cwd) { $cwd = [string]$entry.payload.cwd }
+                    if ($entry.payload.source) { $source = [string]$entry.payload.source }
+                    if ($entry.payload.model_provider) { $modelProvider = [string]$entry.payload.model_provider }
+                    if ($entry.payload.cli_version) { $cliVersion = [string]$entry.payload.cli_version }
+                    $sessionMetaSeen = $true
+                }
+                continue
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'thread_rolled_back') {
+                $recognizedCodexRecordSeen = $true
+                [void]$userDedupeBarrierOrdinals.Add($rawLineOrdinal)
+                $turnsToRemove = if ($null -ne $entry.payload.num_turns) { [int]$entry.payload.num_turns } else { 0 }
+                while ($turnsToRemove -gt 0 -and $effectiveTurnOrder.Count -gt 0) {
+                    $lastIndex = $effectiveTurnOrder.Count - 1
+                    $turnIdToRemove = [string]$effectiveTurnOrder[$lastIndex]
+                    $effectiveTurnOrder.RemoveAt($lastIndex)
+                    if (-not [string]::IsNullOrWhiteSpace($turnIdToRemove)) { [void]$rolledBackTurns.Add($turnIdToRemove) }
+                    $turnsToRemove--
+                }
+                $currentTurnId = if ($effectiveTurnOrder.Count -gt 0) { [string]$effectiveTurnOrder[$effectiveTurnOrder.Count - 1] } else { '' }
+                continue
+            }
+
+            $allowCurrentFallback = $entry.type -eq 'event_msg' -and
+                $entry.payload.type -in @('user_message', 'agent_message', 'exec_command_end', 'function_call_output', 'mcp_tool_call_end', 'patch_apply_end', 'token_count')
+            $entryTurnId = Get-CodexEntryTurnId -Entry $entry -CurrentTurnId $currentTurnId -AllowCurrentTurnFallback:$allowCurrentFallback
+            if (
+                $entry.type -in @('response_item', 'custom_tool_call', 'custom_tool_call_output') -and
+                [string]::IsNullOrWhiteSpace($entryTurnId)
+            ) { $unassignedRecordCount++ }
+
+            $isUserDedupeBarrier =
+                ($entry.type -eq 'event_msg' -and $entry.payload.type -in @('task_started', 'task_complete', 'user_message', 'agent_message', 'exec_command_end', 'function_call_output', 'mcp_tool_call_end', 'patch_apply_end')) -or
+                ($entry.type -eq 'response_item' -and $entry.payload.type -in @('message', 'function_call')) -or
+                $entry.type -in @('custom_tool_call', 'custom_tool_call_output') -or
+                ($entry.type -eq 'response_item' -and $entry.payload.type -in @('custom_tool_call', 'custom_tool_call_output'))
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'item_completed') {
+                $completedItemType = [string]$entry.payload.item.type
+                if ($completedItemType -notin @('Reasoning', 'ContextCompaction')) { $isUserDedupeBarrier = $true }
+            }
+            if ($isUserDedupeBarrier) { [void]$userDedupeBarrierOrdinals.Add($rawLineOrdinal) }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'task_started') {
+                $recognizedCodexRecordSeen = $true
+                if (-not [string]::IsNullOrWhiteSpace($entryTurnId)) {
+                    $currentTurnId = $entryTurnId
+                    if ($effectiveTurnOrder.Count -eq 0 -or [string]$effectiveTurnOrder[$effectiveTurnOrder.Count - 1] -ne $entryTurnId) {
+                        $effectiveTurnOrder.Add($entryTurnId)
+                    }
+                    if (-not $taskByTurn.ContainsKey($entryTurnId)) {
+                        $taskByTurn[$entryTurnId] = [pscustomobject]@{
+                            TurnId = $entryTurnId
+                            StartedUtc = $null
+                            CompletedUtc = $null
+                            TurnUuidUtc = ConvertFrom-CodexUuidV7Time $entryTurnId
+                            LastAgentMessage = ''
+                            StartOrdinal = $rawLineOrdinal
+                            CompleteOrdinal = 0
+                        }
+                        $taskOrder.Add($entryTurnId)
+                    }
+                    $taskByTurn[$entryTurnId].StartedUtc = ConvertFrom-CodexUnixTime $entry.payload.started_at
+                    $taskByTurn[$entryTurnId].StartOrdinal = $rawLineOrdinal
+                }
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'task_complete' -and -not [string]::IsNullOrWhiteSpace($entryTurnId)) {
+                $recognizedCodexRecordSeen = $true
+                if (-not $taskByTurn.ContainsKey($entryTurnId)) {
+                    $taskByTurn[$entryTurnId] = [pscustomobject]@{
+                        TurnId = $entryTurnId
+                        StartedUtc = ConvertFrom-CodexUnixTime $entry.payload.started_at
+                        CompletedUtc = $null
+                        TurnUuidUtc = ConvertFrom-CodexUuidV7Time $entryTurnId
+                        LastAgentMessage = ''
+                        StartOrdinal = 0
+                        CompleteOrdinal = $rawLineOrdinal
+                    }
+                    $taskOrder.Add($entryTurnId)
+                }
+                if ($null -eq $taskByTurn[$entryTurnId].StartedUtc) {
+                    $taskByTurn[$entryTurnId].StartedUtc = ConvertFrom-CodexUnixTime $entry.payload.started_at
+                }
+                $taskByTurn[$entryTurnId].CompletedUtc = ConvertFrom-CodexUnixTime $entry.payload.completed_at
+                $taskByTurn[$entryTurnId].LastAgentMessage = [string]$entry.payload.last_agent_message
+                $taskByTurn[$entryTurnId].CompleteOrdinal = $rawLineOrdinal
+            }
+
+            if ($entry.type -eq 'response_item' -and $entry.payload.type -eq 'function_call') {
+                $recognizedCodexRecordSeen = $true
+                $pendingTools[[string]$entry.payload.call_id] = [ordered]@{
+                    callId = [string]$entry.payload.call_id
+                    toolName = [string]$entry.payload.name
+                    summary = Get-ToolSummary ([string]$entry.payload.name) ([string]$entry.payload.arguments)
+                }
+                continue
+            }
+
+            if ($entry.type -eq 'response_item' -and $entry.payload.type -eq 'message') {
+                $recognizedCodexRecordSeen = $true
+                $metadata = $entry.payload.internal_chat_message_metadata_passthrough
+                $createTime = Get-ObjectPropertyValue $metadata @('create_time')
+                $role = [string]$entry.payload.role
+                $messageId = [string]$entry.payload.id
+                $message = Get-CodexMessageContentText $entry.payload.content
+                if ($role -eq 'user') {
+                    $images = @(Get-CodexMessageContentImages $entry.payload.content)
+                    $cleanedMessage = Remove-CodexInjectedContextPrefix -RawText $message
+                    $messageText = ([string]$cleanedMessage.Text).Trim()
+                    if ([string]::IsNullOrWhiteSpace($messageText) -and $images.Count -gt 0) { $messageText = '[图片]' }
+                    if (-not [string]::IsNullOrWhiteSpace($messageText) -or $images.Count -gt 0) {
+                        $event = New-ReaderEvent -Kind 'user' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId -Role 'user' `
+                            -Summary (Get-ShortText $messageText 160) -RawText $messageText -RenderMode 'plain_text' -Images $images
+                        $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                            -WrapperSource 'response_item_user' -StableItemId $messageId -TopTimestamp $entry.timestamp `
+                            -CreateTime $createTime -UserMessageId $messageId))
+                    }
+                } elseif ($role -eq 'assistant') {
+                    $assistantWrapper = [pscustomobject]@{
+                        RawLineOrdinal = $rawLineOrdinal
+                        TurnId = $entryTurnId
+                        StableItemId = $messageId
+                        Phase = [string]$entry.payload.phase
+                        RawText = $message.TrimEnd()
+                    }
+                    $assistantWrappers.Add($assistantWrapper)
+                    $assistantWrappersByOrdinal[$rawLineOrdinal] = $assistantWrapper
+                }
+                continue
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'agent_message') {
+                $recognizedCodexRecordSeen = $true
+                $phase = [string]$entry.payload.phase
+                $message = [string]$entry.payload.message
+                if ([string]::IsNullOrWhiteSpace($message)) { continue }
+                $kind = if ($phase -eq 'commentary') { 'assistant_commentary' } else { 'assistant_final' }
+                $renderMode = if ($kind -eq 'assistant_final') { 'deterministic_markdown' } else { 'plain_text' }
+                $event = New-ReaderEvent -Kind $kind -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId -Phase $phase `
+                    -Role 'assistant' -Summary (Get-ShortText $message 160) -RawText ($message.TrimEnd()) `
+                    -RenderMode $renderMode -GroupKey $entryTurnId
+                $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                    -WrapperSource 'legacy_agent_message' -TopTimestamp $entry.timestamp))
+                continue
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'user_message') {
+                $recognizedCodexRecordSeen = $true
+                $cleanedMessage = Remove-CodexInjectedContextPrefix -RawText ([string]$entry.payload.message)
+                $messageText = ([string]$cleanedMessage.Text).Trim()
+                if ([string]::IsNullOrWhiteSpace($messageText)) { continue }
+                $event = New-ReaderEvent -Kind 'user' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId -Role 'user' `
+                    -Summary (Get-ShortText $messageText 160) -RawText $messageText -RenderMode 'plain_text'
+                $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                    -WrapperSource 'legacy_user_message' -TopTimestamp $entry.timestamp))
+                continue
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -eq 'item_completed') {
+                $recognizedCodexRecordSeen = $true
+                $item = $entry.payload.item
+                $itemType = [string]$item.type
+                $itemId = [string]$item.id
+                $itemStartedAt = $entry.payload.started_at_ms
+                $itemCompletedAt = $entry.payload.completed_at_ms
+                if ($itemType -eq 'AgentMessage') {
+                    $phase = [string]$item.phase
+                    if ($phase -notin @('commentary', 'final_answer')) {
+                        $unrecognizedRecordCount++
+                        continue
+                    }
+                    $message = Get-CodexContentText $item.content
+                    if ([string]::IsNullOrWhiteSpace($message)) { continue }
+                    $kind = if ($phase -eq 'commentary') { 'assistant_commentary' } else { 'assistant_final' }
+                    $renderMode = if ($kind -eq 'assistant_final') { 'deterministic_markdown' } else { 'plain_text' }
+                    $event = New-ReaderEvent -Kind $kind -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId -Phase $phase `
+                        -Role 'assistant' -Summary (Get-ShortText $message 160) -RawText ($message.TrimEnd()) `
+                        -RenderMode $renderMode -GroupKey $entryTurnId
+                    $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                        -WrapperSource 'completed_item_message' -StableItemId $itemId -TopTimestamp $entry.timestamp `
+                        -ItemStartedAt $itemStartedAt -ItemCompletedAt $itemCompletedAt))
+                    continue
+                }
+                if ($itemType -eq 'UserMessage') {
+                    $message = Get-CodexContentText $item.content
+                    $images = @(Get-CodexMessageContentImages $item.content)
+                    $cleanedMessage = Remove-CodexInjectedContextPrefix -RawText $message
+                    $messageText = ([string]$cleanedMessage.Text).Trim()
+                    if ([string]::IsNullOrWhiteSpace($messageText) -and $images.Count -gt 0) { $messageText = '[图片]' }
+                    if (-not [string]::IsNullOrWhiteSpace($messageText) -or $images.Count -gt 0) {
+                        $event = New-ReaderEvent -Kind 'user' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId -Role 'user' `
+                            -Summary (Get-ShortText $messageText 160) -RawText $messageText -RenderMode 'plain_text' -Images $images
+                        $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                            -WrapperSource 'completed_item_user' -StableItemId $itemId -TopTimestamp $entry.timestamp `
+                            -ItemStartedAt $itemStartedAt -ItemCompletedAt $itemCompletedAt -UserMessageId $itemId))
+                    }
+                    continue
+                }
+                if ($itemType -eq 'CommandExecution') {
+                    $commandValue = Get-ObjectPropertyValue $item @('command')
+                    $commandText = if ($commandValue -is [array]) {
+                        (@($commandValue) | ForEach-Object { [string]$_ }) -join ' '
+                    } elseif (-not [string]::IsNullOrWhiteSpace([string]$commandValue)) {
+                        [string]$commandValue
+                    } else {
+                        Convert-ToCompactJsonText (Get-ObjectPropertyValue $item @('parsed_cmd'))
+                    }
+                    $status = [string]$item.status
+                    if ([string]::IsNullOrWhiteSpace($status) -and $null -ne $item.exit_code) {
+                        $status = if ([int]$item.exit_code -eq 0) { 'completed' } else { 'failed' }
+                    }
+                    $outputParts = [System.Collections.Generic.List[string]]::new()
+                    $aggregate = [string]$item.aggregated_output
+                    if (-not [string]::IsNullOrWhiteSpace($aggregate)) { $outputParts.Add($aggregate) }
+                    foreach ($value in @([string]$item.stdout, [string]$item.stderr)) {
+                        if ([string]::IsNullOrWhiteSpace($value)) { continue }
+                        if ($outputParts.Count -eq 0 -or -not (($outputParts -join "`n").Contains($value))) { $outputParts.Add($value) }
+                    }
+                    if ($outputParts.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.formatted_output)) {
+                        $outputParts.Add([string]$item.formatted_output)
+                    }
+                    $previewSource = @(
+                        [string]$item.formatted_output,
+                        [string]$item.aggregated_output,
+                        [string]$item.stdout,
+                        [string]$item.stderr
+                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1
+                    $resultPreview = Get-ShortText ([string]$previewSource) 120
+                    $summaryParts = @((Get-ShortText $commandText 120), $status)
+                    if ($null -ne $item.exit_code) { $summaryParts += 'exit=' + [string]$item.exit_code }
+                    if ($null -ne $item.duration) { $summaryParts += 'duration=' + [string]$item.duration }
+                    if (-not [string]::IsNullOrWhiteSpace($resultPreview)) { $summaryParts += $resultPreview }
+                    $event = New-ReaderEvent -Kind 'tool' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId `
+                        -CallId $itemId -ToolName 'exec_command' -Status $status -Summary (($summaryParts | Where-Object { $_ }) -join ' | ') `
+                        -RawText (@($outputParts) -join "`n`n") -RenderMode 'tool_output' -GroupKey $itemId
+                    $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                        -WrapperSource 'completed_item_tool' -StableItemId $itemId -TopTimestamp $entry.timestamp `
+                        -ItemStartedAt $itemStartedAt -ItemCompletedAt $itemCompletedAt -AuthoritativeTool))
+                    continue
+                }
+                if ($itemType -eq 'DynamicToolCall') {
+                    $namespace = [string]$item.namespace
+                    $tool = [string]$item.tool
+                    $toolName = if (-not [string]::IsNullOrWhiteSpace($namespace) -and -not [string]::IsNullOrWhiteSpace($tool)) {
+                        $namespace + '.' + $tool
+                    } elseif (-not [string]::IsNullOrWhiteSpace($tool)) { $tool } else { 'dynamic_tool' }
+                    $status = [string]$item.status
+                    if ([string]::IsNullOrWhiteSpace($status) -and $null -ne $item.success) {
+                        $status = if ([bool]$item.success) { 'completed' } else { 'failed' }
+                    }
+                    $arguments = Convert-ToCompactJsonText $item.arguments
+                    $contentText = Get-CodexOutputSequenceText $item.content_items
+                    $rawParts = [System.Collections.Generic.List[string]]::new()
+                    if (-not [string]::IsNullOrWhiteSpace($arguments)) { $rawParts.Add("Arguments:`n" + $arguments) }
+                    if (-not [string]::IsNullOrWhiteSpace($contentText)) { $rawParts.Add("Output:`n" + $contentText) }
+                    $event = New-ReaderEvent -Kind 'tool' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId `
+                        -CallId $itemId -ToolName $toolName -Status $status `
+                        -Summary (Get-ShortText ($toolName + ' | ' + $status + ' | ' + $arguments) 220) `
+                        -RawText (@($rawParts) -join "`n`n") -RenderMode 'tool_output' -GroupKey $itemId
+                    $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                        -WrapperSource 'completed_item_tool' -StableItemId $itemId -TopTimestamp $entry.timestamp `
+                        -ItemStartedAt $itemStartedAt -ItemCompletedAt $itemCompletedAt -AuthoritativeTool))
+                    continue
+                }
+                if ($itemType -eq 'ImageView') {
+                    $path = [string]$item.path
+                    $summary = if ([string]::IsNullOrWhiteSpace($path)) { 'view_image | completed' } else { 'view_image | completed | ' + $path }
+                    $event = New-ReaderEvent -Kind 'tool' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId `
+                        -CallId $itemId -ToolName 'view_image' -Status 'completed' -Summary (Get-ShortText $summary 220) `
+                        -RawText $path -RenderMode 'tool_output' -GroupKey $itemId
+                    $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                        -WrapperSource 'completed_item_tool' -StableItemId $itemId -TopTimestamp $entry.timestamp `
+                        -ItemStartedAt $itemStartedAt -ItemCompletedAt $itemCompletedAt -AuthoritativeTool))
+                    continue
+                }
+                if ($itemType -notin @('Reasoning', 'ContextCompaction')) { $unrecognizedRecordCount++ }
+                continue
+            }
+
+            $isCustomToolCall = $entry.type -eq 'custom_tool_call' -or
+                ($entry.type -eq 'response_item' -and $entry.payload.type -eq 'custom_tool_call')
+            if ($isCustomToolCall) {
+                $recognizedCodexRecordSeen = $true
+                $metadata = $entry.payload.internal_chat_message_metadata_passthrough
+                $customCall = [pscustomobject]@{
+                    CallId = [string]$entry.payload.call_id
+                    TurnId = $entryTurnId
+                    Name = [string]$entry.payload.name
+                    Input = Get-ObjectPropertyValue $entry.payload @('input')
+                    Output = $null
+                    StartOrdinal = $rawLineOrdinal
+                    EndOrdinal = 0
+                    StartTop = $entry.timestamp
+                    EndTop = $null
+                    StartCreate = Get-ObjectPropertyValue $metadata @('create_time')
+                    EndCreate = $null
+                    SuppressFallback = $false
+                }
+                $customCalls.Add($customCall)
+                if (-not $customCallsByTurn.ContainsKey($entryTurnId)) {
+                    $customCallsByTurn[$entryTurnId] = [System.Collections.Generic.List[object]]::new()
+                }
+                $customCallsByTurn[$entryTurnId].Add($customCall)
+                $pendingKey = $entryTurnId + '|' + [string]$entry.payload.call_id
+                if (-not $pendingCustomCalls.ContainsKey($pendingKey)) {
+                    $pendingCustomCalls[$pendingKey] = [System.Collections.Generic.List[object]]::new()
+                }
+                $pendingCustomCalls[$pendingKey].Add($customCall)
+                continue
+            }
+
+            $isCustomToolOutput = $entry.type -eq 'custom_tool_call_output' -or
+                ($entry.type -eq 'response_item' -and $entry.payload.type -eq 'custom_tool_call_output')
+            if ($isCustomToolOutput) {
+                $recognizedCodexRecordSeen = $true
+                $matchedCustomOutput = $false
+                if (-not [string]::IsNullOrWhiteSpace($entryTurnId)) {
+                    $pendingKey = $entryTurnId + '|' + [string]$entry.payload.call_id
+                    if ($pendingCustomCalls.ContainsKey($pendingKey)) {
+                        $pendingList = $pendingCustomCalls[$pendingKey]
+                        for ($pendingIndex = $pendingList.Count - 1; $pendingIndex -ge 0; $pendingIndex--) {
+                            $matchingCall = $pendingList[$pendingIndex]
+                            if ([int]$matchingCall.EndOrdinal -ne 0) { continue }
+                            $matchingCall.Output = Get-ObjectPropertyValue $entry.payload @('output')
+                            $matchingCall.EndOrdinal = $rawLineOrdinal
+                            $matchingCall.EndTop = $entry.timestamp
+                            $matchingCall.EndCreate = Get-ObjectPropertyValue $entry.payload.internal_chat_message_metadata_passthrough @('create_time')
+                            $pendingList.RemoveAt($pendingIndex)
+                            if ($pendingList.Count -eq 0) { [void]$pendingCustomCalls.Remove($pendingKey) }
+                            $matchedCustomOutput = $true
+                            break
+                        }
+                    }
+                }
+                if (-not $matchedCustomOutput) { $unrecognizedRecordCount++ }
+                continue
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -in @('exec_command_end', 'function_call_output', 'mcp_tool_call_end', 'patch_apply_end')) {
+                $recognizedCodexRecordSeen = $true
+                $toolInfo = $pendingTools[[string]$entry.payload.call_id]
+                $toolName = if ($null -ne $toolInfo -and $toolInfo.toolName) { [string]$toolInfo.toolName } else { [string]$entry.payload.name }
+                $resultSummary = Get-CommandResultSummary $entry.payload
+                $toolSummary = if ($null -ne $toolInfo -and -not [string]::IsNullOrWhiteSpace([string]$toolInfo.summary)) {
+                    Get-ShortText ($toolInfo.summary + ' | ' + $resultSummary) 220
+                } else { $resultSummary }
+                $event = New-ReaderEvent -Kind 'tool' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId `
+                    -CallId ([string]$entry.payload.call_id) -ToolName $toolName -Status ([string]$entry.payload.status) `
+                    -Summary $toolSummary -RawText ([string]$entry.payload.aggregated_output) `
+                    -RenderMode 'tool_output' -GroupKey ([string]$entry.payload.call_id)
+                $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                    -WrapperSource 'legacy_tool_result' -TopTimestamp $entry.timestamp))
+                continue
+            }
+
+            if ($entry.type -eq 'event_msg' -and $entry.payload.type -in @('task_started', 'task_complete', 'token_count')) {
+                $recognizedCodexRecordSeen = $true
+                $event = New-ReaderEvent -Kind 'system' -Timestamp '' -TimestampLocal '' -TurnId $entryTurnId `
+                    -Summary ([string]$entry.payload.type) -RawText ($entry.payload | ConvertTo-Json -Depth 20 -Compress) `
+                    -RenderMode 'system_meta'
+                $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal $rawLineOrdinal `
+                    -WrapperSource ('system_' + [string]$entry.payload.type) -TopTimestamp $entry.timestamp))
+                if ($entry.payload.type -eq 'task_complete' -and $entryTurnId -eq $currentTurnId) { $currentTurnId = '' }
+                continue
+            }
+        }
+    } finally {
+        if ($reader) { $reader.Dispose() }
+        if ($stream) { $stream.Dispose() }
+    }
+
+    if (-not $recognizedCodexRecordSeen) {
+        return Read-CodexSessionV030Fallback $File
+    }
+
+    $authoritativeToolsByTurn = @{}
+    foreach ($candidate in @($candidateEvents)) {
+        if (-not $candidate.AuthoritativeTool) { continue }
+        $turnId = [string]$candidate.Event.turnId
+        if ([string]::IsNullOrWhiteSpace($turnId)) { continue }
+        if (-not $authoritativeToolsByTurn.ContainsKey($turnId)) {
+            $authoritativeToolsByTurn[$turnId] = [System.Collections.Generic.List[object]]::new()
+        }
+        $authoritativeToolsByTurn[$turnId].Add($candidate)
+    }
+    foreach ($turnId in @($customCallsByTurn.Keys)) {
+        if (-not $authoritativeToolsByTurn.ContainsKey($turnId)) { continue }
+        $intervals = @($customCallsByTurn[$turnId] | Where-Object { [int]$_.EndOrdinal -gt 0 } | Sort-Object StartOrdinal)
+        if ($intervals.Count -eq 0) { continue }
+        $activeIntervals = [System.Collections.Generic.List[object]]::new()
+        $intervalIndex = 0
+        foreach ($authoritative in @($authoritativeToolsByTurn[$turnId] | Sort-Object RawLineOrdinal)) {
+            $ordinal = [int]$authoritative.RawLineOrdinal
+            while ($intervalIndex -lt $intervals.Count -and [int]$intervals[$intervalIndex].StartOrdinal -le $ordinal) {
+                $activeIntervals.Add($intervals[$intervalIndex])
+                $intervalIndex++
+            }
+            for ($activeIndex = $activeIntervals.Count - 1; $activeIndex -ge 0; $activeIndex--) {
+                if ([int]$activeIntervals[$activeIndex].EndOrdinal -lt $ordinal) { $activeIntervals.RemoveAt($activeIndex) }
+            }
+            $owner = $null
+            $ownerSpan = [int]::MaxValue
+            foreach ($interval in @($activeIntervals)) {
+                if ([int]$interval.StartOrdinal -gt $ordinal -or [int]$interval.EndOrdinal -lt $ordinal) { continue }
+                $span = [int]$interval.EndOrdinal - [int]$interval.StartOrdinal
+                if ($null -eq $owner -or $span -lt $ownerSpan -or ($span -eq $ownerSpan -and [int]$interval.StartOrdinal -gt [int]$owner.StartOrdinal)) {
+                    $owner = $interval
+                    $ownerSpan = $span
+                }
+            }
+            if ($null -ne $owner) { $owner.SuppressFallback = $true }
+        }
+    }
+
+    foreach ($custom in @($customCalls)) {
+        if ([string]::IsNullOrWhiteSpace([string]$custom.TurnId)) { continue }
+        if ([bool]$custom.SuppressFallback) { continue }
+        $inputText = if ($custom.Input -is [string]) { [string]$custom.Input } else { Convert-ToCompactJsonText $custom.Input }
+        $outputText = Get-CodexOutputSequenceText $custom.Output
+        $rawParts = [System.Collections.Generic.List[string]]::new()
+        if (-not [string]::IsNullOrWhiteSpace($inputText)) { $rawParts.Add("Input:`n" + $inputText) }
+        if (-not [string]::IsNullOrWhiteSpace($outputText)) { $rawParts.Add("Output:`n" + $outputText) }
+        $status = if ([int]$custom.EndOrdinal -gt 0) { 'completed' } else { 'unknown' }
+        $toolName = if ([string]::IsNullOrWhiteSpace([string]$custom.Name)) { 'custom_tool' } else { [string]$custom.Name }
+        $event = New-ReaderEvent -Kind 'tool' -Timestamp '' -TimestampLocal '' -TurnId $custom.TurnId `
+            -CallId ([string]$custom.CallId) -ToolName $toolName -Status $status `
+            -Summary (Get-ShortText ($toolName + ' | ' + $status + ' | ' + $inputText) 220) `
+            -RawText (@($rawParts) -join "`n`n") -RenderMode 'tool_output' -GroupKey ([string]$custom.CallId)
+        $candidateEvents.Add((New-CodexEventCandidate -Event $event -RawLineOrdinal ([int]$custom.StartOrdinal) `
+            -WrapperSource 'custom_tool_fallback' -StableItemId ([string]$custom.CallId) `
+            -TopTimestamp $(if ($null -ne $custom.EndTop) { $custom.EndTop } else { $custom.StartTop }) `
+            -CreateTime $(if ($null -ne $custom.EndCreate) { $custom.EndCreate } else { $custom.StartCreate })))
+    }
+
+    $orderedCandidates = @($candidateEvents | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$_.Event.turnId) -or -not $rolledBackTurns.Contains([string]$_.Event.turnId)
+    } | Sort-Object RawLineOrdinal)
+    $deduped = [System.Collections.Generic.List[object]]::new()
+    $seenStableToolKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($candidate in $orderedCandidates) {
+        $event = $candidate.Event
+        $merged = $false
+        if ([string]$event.kind -eq 'user') {
+            for ($index = $deduped.Count - 1; $index -ge 0 -and $index -ge $deduped.Count - 100; $index--) {
+                $existing = $deduped[$index]
+                if ([string]$existing.Event.kind -ne 'user') { continue }
+                $sameStableId = -not [string]::IsNullOrWhiteSpace($candidate.StableItemId) -and $candidate.StableItemId -eq $existing.StableItemId
+                $sameText = (Get-NormalizedUserMessageSignature ([string]$candidate.Event.rawText)) -eq
+                    (Get-NormalizedUserMessageSignature ([string]$existing.Event.rawText))
+                $sameTurn = [string]$candidate.Event.turnId -eq [string]$existing.Event.turnId
+                $crossWrapper = [string]$candidate.WrapperSource -ne [string]$existing.WrapperSource
+                $low = [Math]::Min([int]$candidate.RawLineOrdinal, [int]$existing.RawLineOrdinal)
+                $high = [Math]::Max([int]$candidate.RawLineOrdinal, [int]$existing.RawLineOrdinal)
+                $tightPair = Test-CodexUserCandidateIntervalSafe -BarrierOrdinals $userDedupeBarrierOrdinals -LowOrdinal $low -HighOrdinal $high
+                $sameResponseWrapper = $candidate.WrapperSource -eq 'response_item_user' -and $existing.WrapperSource -eq 'response_item_user'
+                $sameTopTimestamp = $null -ne $candidate.TopUtc -and $null -ne $existing.TopUtc -and $candidate.TopUtc -eq $existing.TopUtc
+                $sameResponseDuplicate = $sameResponseWrapper -and $tightPair -and $sameTopTimestamp
+                if (-not ($sameStableId -or ($sameText -and $sameTurn -and (($crossWrapper -and $tightPair) -or $sameResponseDuplicate)))) { continue }
+
+                $preferred = if ($candidate.WrapperSource -eq 'response_item_user') { $candidate } elseif ($existing.WrapperSource -eq 'response_item_user') { $existing } else { $existing }
+                $metadata = if ($candidate.WrapperSource -eq 'completed_item_user') { $candidate } elseif ($existing.WrapperSource -eq 'completed_item_user') { $existing } else { $candidate }
+                if (-not [string]::IsNullOrWhiteSpace($metadata.StableItemId)) { $preferred.StableItemId = $metadata.StableItemId }
+                if ($null -ne $metadata.ItemStartedUtc) { $preferred.ItemStartedUtc = $metadata.ItemStartedUtc }
+                if ($null -ne $metadata.ItemCompletedUtc) { $preferred.ItemCompletedUtc = $metadata.ItemCompletedUtc }
+                if ($null -ne $metadata.CreateUtc) { $preferred.CreateUtc = $metadata.CreateUtc }
+                if ($null -ne $metadata.UserUuidUtc) { $preferred.UserUuidUtc = $metadata.UserUuidUtc }
+                if (-not [string]::IsNullOrWhiteSpace([string]$metadata.Event.turnId)) {
+                    $preferred.Event.turnId = [string]$metadata.Event.turnId
+                }
+                $preferred.RawLineOrdinal = [Math]::Min([int]$candidate.RawLineOrdinal, [int]$existing.RawLineOrdinal)
+                $deduped[$index] = $preferred
+                $merged = $true
+                break
+            }
+        } elseif ([string]$event.kind -in @('assistant_commentary', 'assistant_final')) {
+            for ($index = $deduped.Count - 1; $index -ge 0 -and $index -ge $deduped.Count - 30; $index--) {
+                $existing = $deduped[$index]
+                if ([string]$existing.Event.kind -ne [string]$event.kind) { continue }
+                if ([string]$existing.Event.turnId -ne [string]$event.turnId) { continue }
+                $sameStableId = -not [string]::IsNullOrWhiteSpace($candidate.StableItemId) -and $candidate.StableItemId -eq $existing.StableItemId
+                $bothAuthoritative = $candidate.WrapperSource -eq 'completed_item_message' -and $existing.WrapperSource -eq 'completed_item_message'
+                if ($bothAuthoritative -and -not $sameStableId) { continue }
+                $sameText = ([string]$candidate.Event.rawText).Trim() -eq ([string]$existing.Event.rawText).Trim()
+                $legacyCompletedPair = @($candidate.WrapperSource, $existing.WrapperSource) -contains 'legacy_agent_message' -and
+                    @($candidate.WrapperSource, $existing.WrapperSource) -contains 'completed_item_message'
+                $low = [Math]::Min([int]$candidate.RawLineOrdinal, [int]$existing.RawLineOrdinal)
+                $high = [Math]::Max([int]$candidate.RawLineOrdinal, [int]$existing.RawLineOrdinal)
+                if (-not $sameStableId -and (-not $sameText -or -not $legacyCompletedPair -or ($high - $low) -gt 3)) { continue }
+                $wrapperMatch = @($assistantWrappers | Where-Object {
+                    $_.RawLineOrdinal -gt $low -and $_.RawLineOrdinal -lt $high -and
+                    (
+                        ($_.StableItemId -in @($candidate.StableItemId, $existing.StableItemId) -and -not [string]::IsNullOrWhiteSpace($_.StableItemId) -and
+                            ([string]::IsNullOrWhiteSpace([string]$_.TurnId) -or $_.TurnId -eq [string]$event.turnId)) -or
+                        ($_.TurnId -eq [string]$event.turnId -and $_.RawText.Trim() -eq ([string]$event.rawText).Trim())
+                    )
+                }).Count -gt 0
+                $wrapperClusterSafe = Test-CodexAssistantWrapperCluster -WrappersByOrdinal $assistantWrappersByOrdinal `
+                    -LowOrdinal $low -HighOrdinal $high -TurnId ([string]$event.turnId) -RawText ([string]$event.rawText) `
+                    -EventKind ([string]$event.kind) `
+                    -StableItemIds @([string]$candidate.StableItemId, [string]$existing.StableItemId)
+                if (-not ($sameStableId -or ($sameText -and $legacyCompletedPair -and $wrapperMatch -and $wrapperClusterSafe))) { continue }
+                $preferred = if ($candidate.WrapperSource -eq 'completed_item_message') { $candidate } else { $existing }
+                $preferred.RawLineOrdinal = $low
+                $deduped[$index] = $preferred
+                $merged = $true
+                break
+            }
+        } elseif ([string]$event.kind -eq 'tool' -and -not [string]::IsNullOrWhiteSpace($candidate.StableItemId)) {
+            $stableToolKey = [string]$event.turnId + '|' + [string]$candidate.StableItemId
+            if (-not $seenStableToolKeys.Add($stableToolKey)) { $merged = $true }
+        }
+        if (-not $merged) { $deduped.Add($candidate) }
+    }
+
+    $finalCounts = @{}
+    foreach ($candidate in @($deduped)) {
+        if ($candidate.Event.kind -ne 'assistant_final') { continue }
+        $turnId = [string]$candidate.Event.turnId
+        if (-not $finalCounts.ContainsKey($turnId)) { $finalCounts[$turnId] = 0 }
+        $finalCounts[$turnId]++
+    }
+    $taskSequence = [System.Collections.Generic.List[object]]::new()
+    $taskPosition = @{}
+    foreach ($turnId in @($taskOrder)) {
+        if ($rolledBackTurns.Contains([string]$turnId) -or $taskPosition.ContainsKey([string]$turnId)) { continue }
+        $taskPosition[[string]$turnId] = $taskSequence.Count
+        $taskSequence.Add($taskByTurn[[string]$turnId])
+    }
+
+    $events = [System.Collections.Generic.List[object]]::new()
+    foreach ($candidate in @($deduped | Sort-Object RawLineOrdinal)) {
+        $turnId = [string]$candidate.Event.turnId
+        $task = if ($taskByTurn.ContainsKey($turnId)) { $taskByTurn[$turnId] } else { $null }
+        $previousTask = $null
+        $nextTask = $null
+        if ($taskPosition.ContainsKey($turnId)) {
+            $position = [int]$taskPosition[$turnId]
+            if ($position -gt 0) { $previousTask = $taskSequence[$position - 1] }
+            if ($position + 1 -lt $taskSequence.Count) { $nextTask = $taskSequence[$position + 1] }
+        }
+        $turnFinalCount = if ($finalCounts.ContainsKey($turnId)) { [int]$finalCounts[$turnId] } else { 0 }
+        $resolvedTime = Get-CodexResolvedCandidateTime -Candidate $candidate -Task $task `
+            -PreviousTask $previousTask -NextTask $nextTask -TurnFinalCount $turnFinalCount
+        Set-CodexResolvedEventTime -Event $candidate.Event -Value $resolvedTime
+        $events.Add($candidate.Event)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($createdAt)) { $createdAt = $File.CreationTimeUtc.ToString('o') }
+    if ($null -eq (ConvertTo-CodexDateTimeOffset $updatedAt)) { $updatedAt = $File.LastWriteTimeUtc.ToString('o') }
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    $userEvents = @($events | Where-Object kind -eq 'user')
+    $assistantEvents = @($events | Where-Object kind -in @('assistant_commentary', 'assistant_final'))
+    if ($userEvents.Count -eq 0 -and $assistantEvents.Count -eq 0) { return New-SkippedReaderSession 'empty-after-context-filter' }
+    $firstUserMessage = if ($userEvents.Count -gt 0) { [string]$userEvents[0].rawText } else { '' }
+    $title = Get-FirstLine $firstUserMessage
+    if ([string]::IsNullOrWhiteSpace($title)) { $title = $File.Name }
+
+    [pscustomobject]@{
+        Id = $id
+        Cwd = $cwd
+        Title = $title
+        Summary = Get-ShortText $firstUserMessage 220
+        CreatedAt = Convert-ToUtcIsoText $createdAt
+        CreatedLocal = Convert-ToLocalTimeText $createdAt
+        UpdatedAt = Convert-ToUtcIsoText $updatedAt
+        UpdatedLocal = Convert-ToLocalTimeText $updatedAt
+        Source = $source
+        ModelProvider = $modelProvider
+        CliVersion = $cliVersion
+        UserCount = $userEvents.Count
+        AssistantCount = $assistantEvents.Count
+        UnassignedRecordCount = $unassignedRecordCount
+        UnrecognizedRecordCount = $unrecognizedRecordCount
+        HasImageReference = @($userEvents | Where-Object { Test-ReaderEventHasImages $_ }).Count -gt 0
+        Archived = Test-IsArchivedSessionPath $File.FullName
+        Path = $File.FullName
+        FileUri = Convert-ToFileUri $File.FullName
+        SizeBytes = $File.Length
+        Events = @($events)
+    }
+}
+
 $generatedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 $resolvedOutput = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 $outputDir = Split-Path -Parent $resolvedOutput
-New-Item -ItemType Directory -Force $outputDir | Out-Null
 $SourceId = Get-SafeSourceId $SourceId
 $SourceType = if ([string]::IsNullOrWhiteSpace($SourceType)) { "local-codex" } else { [string]$SourceType }
-if ($SourceType -ne 'local-codex' -and $SourceType -ne 'external-codex-jsonl' -and $SourceType -ne 'local-claude') {
+if ($SourceType -notin @('local-codex', 'external-codex-jsonl', 'local-claude', 'webdav-codex', 'webdav-claude')) {
     throw "Unsupported SourceType: $SourceType"
 }
+$isClaudeSource = $SourceType -in @('local-claude', 'webdav-claude')
+$isRemoteSource = $SourceType -in @('webdav-codex', 'webdav-claude')
 if ($SourceType -eq 'local-codex') {
     $SourceId = 'local-codex'
 } elseif ($SourceType -eq 'local-claude') {
     $SourceId = 'local-claude'
 }
-if ([string]::IsNullOrWhiteSpace($SourceLabel)) {
-    $SourceLabel = if ($SourceType -eq 'local-codex') {
-        '本机 Codex'
-    } elseif ($SourceType -eq 'local-claude') {
-        '本机 Claude'
-    } elseif (-not [string]::IsNullOrWhiteSpace($ExternalSourcePath)) {
+if ($SourceType -in @('local-codex', 'local-claude')) {
+    $SourceLabel = Get-LocalSourceLabel -SourceType $SourceType -MachineName $MachineName
+} elseif ([string]::IsNullOrWhiteSpace($SourceLabel)) {
+    $SourceLabel = if (-not [string]::IsNullOrWhiteSpace($ExternalSourcePath)) {
         Split-Path -Leaf $ExternalSourcePath
     } else {
         $SourceId
@@ -1739,11 +3372,36 @@ $archiveRoot = Join-Path $CodexHome "archived_sessions"
 $claudeProjectsRoot = Join-Path $ClaudeHome "projects"
 $claudeSessionsRoot = Join-Path $ClaudeHome "sessions"
 $resolvedExternalSourcePath = ""
+$resolvedRemoteSourceRoot = ""
 if ($SourceType -eq 'external-codex-jsonl') {
     if ([string]::IsNullOrWhiteSpace($ExternalSourcePath)) {
         throw "ExternalSourcePath is required when SourceType is external-codex-jsonl."
     }
     $resolvedExternalSourcePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ExternalSourcePath)
+}
+if ($isRemoteSource) {
+    if ([string]::IsNullOrWhiteSpace($RemoteSourceRoot)) {
+        throw "RemoteSourceRoot is required for WebDAV sources."
+    }
+    if ([string]::IsNullOrWhiteSpace($OriginMapPath)) {
+        throw "OriginMapPath is required for WebDAV sources."
+    }
+    $resolvedRemoteSourceRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($RemoteSourceRoot)
+    if (-not (Test-Path -LiteralPath $resolvedRemoteSourceRoot -PathType Container)) {
+        throw "RemoteSourceRoot was not found: $resolvedRemoteSourceRoot"
+    }
+    if (-not (Test-Path -LiteralPath $OriginMapPath -PathType Leaf)) {
+        throw "OriginMapPath was not found: $OriginMapPath"
+    }
+    if ($SourceType -eq 'webdav-codex') {
+        $sessionRoot = Join-Path $resolvedRemoteSourceRoot 'sessions'
+        $archiveRoot = Join-Path $resolvedRemoteSourceRoot 'archived_sessions'
+    } else {
+        $ClaudeHome = $resolvedRemoteSourceRoot
+        $claudeProjectsRoot = Join-Path $resolvedRemoteSourceRoot 'projects'
+        $claudeSessionsRoot = Join-Path $resolvedRemoteSourceRoot 'sessions_metadata'
+    }
+    $DisableLocalPathImages = $true
 }
 $sourceInfo = if ($SourceType -eq 'local-codex') {
     [ordered]@{
@@ -1751,14 +3409,24 @@ $sourceInfo = if ($SourceType -eq 'local-codex') {
         label = $SourceLabel
         type = $SourceType
         roots = @($sessionRoot, $archiveRoot)
+        capabilities = Get-SourceCapabilities $SourceType
     }
-} elseif ($SourceType -eq 'local-claude') {
+} elseif ($isClaudeSource) {
     [ordered]@{
         id = $SourceId
         label = $SourceLabel
         type = $SourceType
         root = $claudeProjectsRoot
         sessionsRoot = $claudeSessionsRoot
+        capabilities = Get-SourceCapabilities $SourceType
+    }
+} elseif ($SourceType -eq 'webdav-codex') {
+    [ordered]@{
+        id = $SourceId
+        label = $SourceLabel
+        type = $SourceType
+        roots = @($sessionRoot, $archiveRoot)
+        capabilities = Get-SourceCapabilities $SourceType
     }
 } else {
     [ordered]@{
@@ -1766,23 +3434,18 @@ $sourceInfo = if ($SourceType -eq 'local-codex') {
         label = $SourceLabel
         type = $SourceType
         root = $resolvedExternalSourcePath
+        capabilities = Get-SourceCapabilities $SourceType
     }
 }
 if ([string]::IsNullOrWhiteSpace($DataRoot)) {
     $DataRoot = Join-Path (Split-Path -Parent $PSScriptRoot) '运行数据'
 }
 $resolvedDataRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DataRoot)
-New-Item -ItemType Directory -Force $resolvedDataRoot | Out-Null
 $useSourceDataLayout = $true
 $effectiveDataRoot = if ($useSourceDataLayout) {
     Join-Path (Join-Path $resolvedDataRoot 'CodexChatIndex.sources') $SourceId
 } else {
     $resolvedDataRoot
-}
-New-Item -ItemType Directory -Force $effectiveDataRoot | Out-Null
-if (-not $outputPathWasProvided) {
-    $sharedRoot = Split-Path -Parent $PSScriptRoot
-    New-Item -ItemType Directory -Force (Join-Path $sharedRoot '外部聊天记录') | Out-Null
 }
 $dataOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) {
     [System.IO.Path]::ChangeExtension($resolvedOutput, ".data.json")
@@ -1790,15 +3453,20 @@ $dataOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) {
     Join-Path $effectiveDataRoot 'CodexChatIndex.data.json'
 }
 $detailRoot = Join-Path $effectiveDataRoot 'CodexChatIndex.sessions'
-New-Item -ItemType Directory -Force $detailRoot | Out-Null
 $cacheOutput = Join-Path $effectiveDataRoot 'CodexChatIndex.cache.json'
 $searchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) {
     [System.IO.Path]::ChangeExtension($resolvedOutput, ".search.json")
 } else {
     Join-Path $effectiveDataRoot 'CodexChatIndex.search.json'
 }
-Update-SourceManifest -RuntimeDataRoot $resolvedDataRoot -Source $sourceInfo
-$builderVersion = "V0.26"
+$otherSearchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) {
+    [System.IO.Path]::ChangeExtension($resolvedOutput, ".search.other.json")
+} else {
+    Join-Path $effectiveDataRoot 'CodexChatIndex.search.other.json'
+}
+$builderVersion = "V0.31"
+$parserRevision = 3
+$templatePath = Join-Path $PSScriptRoot 'templates\CodexChatIndex.template.html'
 $indexRelativePath = Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $dataOutput
 if ($indexRelativePath -notmatch '^(\./|\.\./|/)') {
     $indexRelativePath = './' + $indexRelativePath
@@ -1807,7 +3475,7 @@ $indexUrlForScript = Convert-ToJavaScriptSingleQuotedContent $indexRelativePath
 $detailRelativeRoot = (Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $detailRoot).TrimEnd('/')
 $expectedDetailPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
-$cacheRead = if ($RefreshMode -eq 'Full') {
+$cacheRead = if ($RefreshMode -eq 'Full' -and -not $StatusOnly) {
     [pscustomobject]@{
         Exists = $false
         Parsed = $false
@@ -1825,7 +3493,12 @@ if ($RefreshMode -ne 'Full') {
         $cacheNotice = "共享缓存不存在，已自动执行全量重建。"
     } elseif (-not $cacheRead.Parsed) {
         $cacheNotice = "共享缓存损坏，已自动执行全量重建。"
-    } elseif ($null -eq $cacheData -or $cacheData.cacheVersion -ne 3 -or [string]$cacheData.builderVersion -ne $builderVersion) {
+    } elseif (
+        $null -eq $cacheData -or
+        $cacheData.cacheVersion -ne 5 -or
+        [string]$cacheData.builderVersion -ne $builderVersion -or
+        [int]$cacheData.parserRevision -ne $parserRevision
+    ) {
         $cacheNotice = "共享缓存版本不兼容，已自动执行全量重建。"
     } elseif (-not $cacheData.files) {
         $cacheNotice = "共享缓存为空，已自动执行全量重建。"
@@ -1847,6 +3520,9 @@ if ($RefreshMode -ne 'Full' -and $cacheMap.Count -eq 0) {
 
 $currentPath = ""
 if ($effectiveRefreshMode -eq 'Current') {
+    if ($isRemoteSource) {
+        throw "Current refresh is not supported for WebDAV sources."
+    }
     $currentPath = Get-NormalizedFilePath $CurrentSessionPath
     if ([string]::IsNullOrWhiteSpace($currentPath)) {
         throw "CurrentSessionPath is required when RefreshMode is Current."
@@ -1854,7 +3530,7 @@ if ($effectiveRefreshMode -eq 'Current') {
     if ($SourceType -eq 'external-codex-jsonl' -and -not (Test-PathWithinDirectory -Path $currentPath -Directory $resolvedExternalSourcePath)) {
         throw "Current session file is outside the selected external source: $currentPath"
     }
-    if ($SourceType -eq 'local-claude' -and -not (Test-PathWithinDirectory -Path $currentPath -Directory $claudeProjectsRoot)) {
+    if ($isClaudeSource -and -not (Test-PathWithinDirectory -Path $currentPath -Directory $claudeProjectsRoot)) {
         throw "Current session file is outside the local Claude projects root: $currentPath"
     }
 }
@@ -1863,7 +3539,9 @@ $files = @()
 $fileMap = @{}
 $scannedCount = 0
 $effectiveClaudeScanRoots = @()
-$claudeSessionMetadataMap = if ($SourceType -eq 'local-claude') {
+$syncInventoryErrors = [System.Collections.Generic.List[string]]::new()
+$hasExplicitClaudeScanRoots = $ClaudeScanRoots -and @($ClaudeScanRoots).Count -gt 0
+$claudeSessionMetadataMap = if ($isClaudeSource) {
     Read-ClaudeSessionMetadataMap -ClaudeSessionsRoot $claudeSessionsRoot
 } else {
     @{}
@@ -1881,18 +3559,33 @@ if ($effectiveRefreshMode -eq 'Current') {
         if (Test-Path -LiteralPath $resolvedExternalSourcePath -PathType Container) {
             $files += Get-ChildItem -LiteralPath $resolvedExternalSourcePath -Recurse -File -Filter "*.jsonl"
         }
-    } elseif ($SourceType -eq 'local-claude') {
-        $effectiveClaudeScanRoots = Get-ClaudeExtraSourceRoots -ClaudeHome $ClaudeHome -ClaudeScanRoots $ClaudeScanRoots
+    } elseif ($isClaudeSource) {
+        $effectiveClaudeScanRoots = if ($isRemoteSource) {
+            @($resolvedRemoteSourceRoot)
+        } else {
+            Get-ClaudeExtraSourceRoots -ClaudeHome $ClaudeHome -ClaudeScanRoots $ClaudeScanRoots
+        }
         $claudeCandidates = [System.Collections.Generic.Dictionary[string, System.IO.FileInfo]]::new([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($claudeRoot in $effectiveClaudeScanRoots) {
-            if (-not (Test-Path -LiteralPath $claudeRoot -PathType Container)) { continue }
-            foreach ($candidate in @(Get-ChildItem -LiteralPath $claudeRoot -Recurse -File -Filter "*.jsonl" -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path -LiteralPath $claudeRoot -PathType Container)) {
+                if (-not [string]::IsNullOrWhiteSpace($ExportSyncInventoryPath) -and $hasExplicitClaudeScanRoots) {
+                    $syncInventoryErrors.Add("Claude scan root is not a readable directory: $claudeRoot")
+                }
+                continue
+            }
+            $claudeEnumerationErrors = @()
+            $claudeJsonlCandidates = @(Get-ChildItem -LiteralPath $claudeRoot -Recurse -File -Filter "*.jsonl" -ErrorAction SilentlyContinue -ErrorVariable +claudeEnumerationErrors)
+            $claudeJsonCandidates = @(Get-ChildItem -LiteralPath $claudeRoot -Recurse -File -Filter "*.json" -ErrorAction SilentlyContinue -ErrorVariable +claudeEnumerationErrors)
+            foreach ($enumerationError in @($claudeEnumerationErrors)) {
+                $syncInventoryErrors.Add("Claude scan failed under ${claudeRoot}: $($enumerationError.Exception.Message)")
+            }
+            foreach ($candidate in $claudeJsonlCandidates) {
                 $candidatePath = Get-NormalizedFilePath $candidate.FullName
                 if (-not [string]::IsNullOrWhiteSpace($candidatePath)) {
                     $claudeCandidates[$candidatePath] = $candidate
                 }
             }
-            foreach ($candidate in @(Get-ChildItem -LiteralPath $claudeRoot -Recurse -File -Filter "*.json" -ErrorAction SilentlyContinue)) {
+            foreach ($candidate in $claudeJsonCandidates) {
                 $candidatePath = Get-NormalizedFilePath $candidate.FullName
                 if (-not [string]::IsNullOrWhiteSpace($candidatePath)) {
                     $claudeCandidates[$candidatePath] = $candidate
@@ -1934,17 +3627,123 @@ $cachedSourceSignatureText = if ($null -ne $cacheData -and ($cacheData.PSObject.
     ""
 }
 
+if (-not [string]::IsNullOrWhiteSpace($ExportSyncInventoryPath)) {
+    if ($SourceType -notin @('local-codex', 'local-claude')) {
+        throw "ExportSyncInventoryPath is only supported for local-codex and local-claude."
+    }
+    $inventoryFiles = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
+    foreach ($file in @($files)) { [void]$inventoryFiles.Add($file) }
+    if ($SourceType -eq 'local-claude' -and (Test-Path -LiteralPath $claudeSessionsRoot -PathType Container)) {
+        $claudeMetadataErrors = @()
+        foreach ($metadataFile in @(Get-ChildItem -LiteralPath $claudeSessionsRoot -File -Filter '*.json' -ErrorAction SilentlyContinue -ErrorVariable +claudeMetadataErrors)) {
+            [void]$inventoryFiles.Add($metadataFile)
+        }
+        foreach ($metadataError in @($claudeMetadataErrors)) {
+            $syncInventoryErrors.Add("Claude session metadata scan failed: $($metadataError.Exception.Message)")
+        }
+    }
+    $inventoryEntries = @(
+        $inventoryFiles |
+            Sort-Object FullName -Unique |
+            ForEach-Object {
+                New-SyncInventoryFileEntry `
+                    -File $_ `
+                    -SourceType $SourceType `
+                    -SessionRoot $sessionRoot `
+                    -ArchiveRoot $archiveRoot `
+                    -ClaudeHome $ClaudeHome `
+                    -ClaudeSessionsRoot $claudeSessionsRoot
+            }
+    )
+    $inventoryPayload = [ordered]@{
+        version = 1
+        sourceId = $SourceId
+        sourceType = $SourceType
+        sourceSignature = $sourceSignature
+        scanComplete = ($syncInventoryErrors.Count -eq 0)
+        errors = @($syncInventoryErrors | Sort-Object -Unique)
+        files = @($inventoryEntries)
+    }
+    $resolvedInventoryPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ExportSyncInventoryPath)
+    Write-Utf8FileAtomic -Path $resolvedInventoryPath -Value ($inventoryPayload | ConvertTo-Json -Depth 100)
+    $buildStopwatch.Stop()
+    $inventorySummary = [pscustomobject]@{
+        Mode = 'ExportSyncInventory'
+        SourceId = $SourceId
+        SourceType = $SourceType
+        InventoryPath = $resolvedInventoryPath
+        ScannedCount = $inventoryEntries.Count
+        ScanComplete = ($syncInventoryErrors.Count -eq 0)
+        ElapsedMs = [int][Math]::Round($buildStopwatch.Elapsed.TotalMilliseconds)
+    }
+    if ($JsonSummary) { $inventorySummary | ConvertTo-Json -Depth 20 -Compress } else { $inventorySummary }
+    return
+}
+
+if ($StatusOnly) {
+    if ($SourceType -notin @('local-codex', 'local-claude')) {
+        throw "StatusOnly is only supported for local-codex and local-claude."
+    }
+    $outputsComplete = (Test-BuildOutputsComplete -HtmlPath $resolvedOutput -DataPath $dataOutput -SearchPath $searchOutput -OtherSearchPath $otherSearchOutput -CachePath $cacheOutput)
+    $detailsComplete = $outputsComplete -and (Test-CachedDetailFilesComplete -CacheData $cacheData -DetailRoot $detailRoot)
+    $signatureMatches = -not [string]::IsNullOrWhiteSpace($sourceSignatureText) -and $sourceSignatureText -eq $cachedSourceSignatureText
+    $noChange = $signatureMatches -and $outputsComplete -and $detailsComplete
+    $buildStopwatch.Stop()
+    $statusSummary = [pscustomobject]@{
+        Mode = 'StatusOnly'
+        SourceId = $SourceId
+        SourceType = $SourceType
+        SourceSignature = $sourceSignature
+        ScannedCount = $scannedCount
+        NoChange = $noChange
+        OutputsComplete = $outputsComplete
+        DetailsComplete = $detailsComplete
+        Reason = if ($noChange) { '' } elseif (-not $outputsComplete) { '构建输出不完整' } elseif (-not $detailsComplete) { '会话详情不完整' } else { '本机来源已变化' }
+        ElapsedMs = [int][Math]::Round($buildStopwatch.Elapsed.TotalMilliseconds)
+    }
+    if ($JsonSummary) { $statusSummary | ConvertTo-Json -Depth 100 -Compress } else { $statusSummary }
+    return
+}
+
+New-Item -ItemType Directory -Force $outputDir | Out-Null
+New-Item -ItemType Directory -Force $resolvedDataRoot | Out-Null
+New-Item -ItemType Directory -Force $effectiveDataRoot | Out-Null
+New-Item -ItemType Directory -Force $detailRoot | Out-Null
+if (-not $outputPathWasProvided) {
+    $sharedRoot = Split-Path -Parent $PSScriptRoot
+    New-Item -ItemType Directory -Force (Join-Path $sharedRoot '外部聊天记录') | Out-Null
+}
+Update-SourceManifest -RuntimeDataRoot $resolvedDataRoot -Source $sourceInfo
+
 if (
     $RefreshMode -eq 'Incremental' -and
     $effectiveRefreshMode -eq 'Incremental' -and
     [string]::IsNullOrWhiteSpace($cacheNotice) -and
     -not [string]::IsNullOrWhiteSpace($sourceSignatureText) -and
     $sourceSignatureText -eq $cachedSourceSignatureText -and
-    (Test-BuildOutputsComplete -HtmlPath $resolvedOutput -DataPath $dataOutput -SearchPath $searchOutput -CachePath $cacheOutput) -and
+    (Test-BuildOutputsComplete -HtmlPath $resolvedOutput -DataPath $dataOutput -SearchPath $searchOutput -OtherSearchPath $otherSearchOutput -CachePath $cacheOutput) -and
     (Test-CachedDetailFilesComplete -CacheData $cacheData -DetailRoot $detailRoot)
 ) {
     $existingData = Read-JsonFileDetailed $dataOutput
     $existingAppData = if ($existingData.Parsed -and $existingData.Value) { $existingData.Value } else { $null }
+    $htmlUpdated = $false
+    if ($existingAppData) {
+        $expectedHtml = Render-HtmlTemplate -TemplatePath $templatePath -Values ([ordered]@{
+            BUILDER_VERSION = [string]$builderVersion
+            INDEX_URL = [string]$indexUrlForScript
+            TOTAL_SESSIONS = [string]$existingAppData.totalSessions
+            TOTAL_WORKSPACES = [string]$existingAppData.totalWorkspaces
+            ARCHIVED_COUNT = [string]$existingAppData.archived
+            IMAGE_REF_COUNT = [string]$existingAppData.imageReferences
+            GENERATED_AT = [string]$existingAppData.generatedAt
+        })
+        $currentHtml = ((Get-Content -LiteralPath $resolvedOutput -Raw) -replace "`r`n?", "`n").TrimEnd([char[]]"`r`n")
+        $expectedHtmlForComparison = $expectedHtml.TrimEnd([char[]]"`r`n")
+        if ($currentHtml -cne $expectedHtmlForComparison) {
+            Write-Utf8FileAtomic -Path $resolvedOutput -Value $expectedHtml
+            $htmlUpdated = $true
+        }
+    }
     $buildStopwatch.Stop()
     $summary = [pscustomobject]@{
         Mode = $effectiveRefreshMode
@@ -1954,6 +3753,7 @@ if (
         OutputPath = $resolvedOutput
         DataPath = $dataOutput
         SearchPath = $searchOutput
+        OtherSearchPath = $otherSearchOutput
         CachePath = $cacheOutput
         DetailRoot = $detailRoot
         ScannedCount = $scannedCount
@@ -1966,9 +3766,12 @@ if (
         Workspaces = if ($existingAppData) { [int]$existingAppData.totalWorkspaces } else { 0 }
         Archived = if ($existingAppData) { [int]$existingAppData.archived } else { 0 }
         ImageReferences = if ($existingAppData) { [int]$existingAppData.imageReferences } else { 0 }
-        Notice = "未发现新增或修改记录，已跳过重写。"
+        UnassignedRecordCount = 0
+        UnrecognizedRecordCount = 0
+        Notice = if ($htmlUpdated) { "未发现新增或修改记录，已同步页面模板。" } else { "未发现新增或修改记录，已跳过重写。" }
         NoChange = $true
-        SkippedWrite = $true
+        SkippedWrite = -not $htmlUpdated
+        HtmlUpdated = $htmlUpdated
     }
 
     if ($JsonSummary) {
@@ -1987,7 +3790,7 @@ $failedCount = 0
 
 if ($effectiveRefreshMode -eq 'Full') {
     foreach ($file in $files) {
-        $session = if ($SourceType -eq 'local-claude') {
+        $session = if ($isClaudeSource) {
             if ($file.Extension -ieq '.json') {
                 $conversationSession = Read-ClaudeCodeChatConversation -File $file
                 if ($null -ne $conversationSession) { $conversationSession } else { Read-ClaudeSession -File $file -SessionMetadataMap $claudeSessionMetadataMap }
@@ -2005,7 +3808,8 @@ if ($effectiveRefreshMode -eq 'Full') {
             continue
         }
         $detailFileName = Get-SessionDetailFileName $session
-        $sessionsList.Add((Add-SessionRuntimeFields -Session $session -File $file -DetailFileName $detailFileName -Cached $false -SourceId $SourceId))
+        $sessionsList.Add((Complete-ParsedSessionForBuild -Session $session -File $file -DetailFileName $detailFileName `
+            -DetailRoot $detailRoot -SourceId $SourceId -DeferDetailWrite $isRemoteSource))
         $parsedCount++
     }
 } elseif ($effectiveRefreshMode -eq 'Incremental') {
@@ -2019,7 +3823,7 @@ if ($effectiveRefreshMode -eq 'Full') {
             continue
         }
 
-        $session = if ($SourceType -eq 'local-claude') {
+        $session = if ($isClaudeSource) {
             if ($file.Extension -ieq '.json') {
                 $conversationSession = Read-ClaudeCodeChatConversation -File $file
                 if ($null -ne $conversationSession) { $conversationSession } else { Read-ClaudeSession -File $file -SessionMetadataMap $claudeSessionMetadataMap }
@@ -2037,7 +3841,8 @@ if ($effectiveRefreshMode -eq 'Full') {
             continue
         }
         $detailFileName = Get-SessionDetailFileName $session
-        $sessionsList.Add((Add-SessionRuntimeFields -Session $session -File $file -DetailFileName $detailFileName -Cached $false -SourceId $SourceId))
+        $sessionsList.Add((Complete-ParsedSessionForBuild -Session $session -File $file -DetailFileName $detailFileName `
+            -DetailRoot $detailRoot -SourceId $SourceId -DeferDetailWrite $isRemoteSource))
         $parsedCount++
     }
 
@@ -2058,7 +3863,7 @@ if ($effectiveRefreshMode -eq 'Full') {
         }
         if (Test-Path -LiteralPath $cachedPath -PathType Leaf) {
             $repairFile = Get-Item -LiteralPath $cachedPath
-            $session = if ($SourceType -eq 'local-claude') {
+            $session = if ($isClaudeSource) {
                 if ($repairFile.Extension -ieq '.json') {
                     $conversationSession = Read-ClaudeCodeChatConversation -File $repairFile
                     if ($null -ne $conversationSession) { $conversationSession } else { Read-ClaudeSession -File $repairFile -SessionMetadataMap $claudeSessionMetadataMap }
@@ -2076,7 +3881,8 @@ if ($effectiveRefreshMode -eq 'Full') {
                 continue
             }
             $repairDetailFileName = Get-SessionDetailFileName $session
-            $sessionsList.Add((Add-SessionRuntimeFields -Session $session -File $repairFile -DetailFileName $repairDetailFileName -Cached $false -SourceId $SourceId))
+            $sessionsList.Add((Complete-ParsedSessionForBuild -Session $session -File $repairFile -DetailFileName $repairDetailFileName `
+                -DetailRoot $detailRoot -SourceId $SourceId -DeferDetailWrite $isRemoteSource))
             $parsedCount++
             $scannedCount++
             continue
@@ -2086,7 +3892,7 @@ if ($effectiveRefreshMode -eq 'Full') {
     }
 
     $currentFile = $fileMap[$currentPath]
-    $session = if ($SourceType -eq 'local-claude') {
+    $session = if ($isClaudeSource) {
         if ($currentFile.Extension -ieq '.json') {
             $conversationSession = Read-ClaudeCodeChatConversation -File $currentFile
             if ($null -ne $conversationSession) { $conversationSession } else { Read-ClaudeSession -File $currentFile -SessionMetadataMap $claudeSessionMetadataMap }
@@ -2102,12 +3908,50 @@ if ($effectiveRefreshMode -eq 'Full') {
         $failedCount++
     } else {
         $detailFileName = Get-SessionDetailFileName $session
-        $sessionsList.Add((Add-SessionRuntimeFields -Session $session -File $currentFile -DetailFileName $detailFileName -Cached $false -SourceId $SourceId))
+        $sessionsList.Add((Complete-ParsedSessionForBuild -Session $session -File $currentFile -DetailFileName $detailFileName `
+            -DetailRoot $detailRoot -SourceId $SourceId -DeferDetailWrite $isRemoteSource))
         $parsedCount++
     }
 }
 
+if ($isRemoteSource) {
+    $originMapRead = Read-JsonFileDetailed $OriginMapPath
+    if (-not $originMapRead.Parsed -or $null -eq $originMapRead.Value) {
+        throw "OriginMapPath does not contain a valid JSON object."
+    }
+    $remoteOriginMap = @{}
+    foreach ($property in @($originMapRead.Value.PSObject.Properties)) {
+        $logicalPath = ([string]$property.Name).Replace('\', '/').TrimStart('/')
+        if (-not [string]::IsNullOrWhiteSpace($logicalPath)) {
+            $remoteOriginMap[$logicalPath] = [string]$property.Value
+        }
+    }
+    foreach ($session in @($sessionsList)) {
+        $rawSessionPath = [string]$session.Path
+        $logicalPath = [System.IO.Path]::GetRelativePath($resolvedRemoteSourceRoot, $rawSessionPath).Replace('\', '/')
+        if (-not $remoteOriginMap.ContainsKey($logicalPath) -or [string]::IsNullOrWhiteSpace([string]$remoteOriginMap[$logicalPath])) {
+            throw "Origin map is missing the parsed remote file: $logicalPath"
+        }
+        $originPath = [string]$remoteOriginMap[$logicalPath]
+        $session | Add-Member -NotePropertyName Path -NotePropertyValue $originPath -Force
+        $session | Add-Member -NotePropertyName FileUri -NotePropertyValue (Convert-ToFileUri $originPath) -Force
+        [void](Set-SessionSearchFields $session)
+    }
+}
+
+$buildUnassignedRecordCount = 0
+$buildUnrecognizedRecordCount = 0
+foreach ($session in @($sessionsList)) {
+    if ($session.PSObject.Properties.Name -contains 'UnassignedRecordCount') {
+        $buildUnassignedRecordCount += [int]$session.UnassignedRecordCount
+    }
+    if ($session.PSObject.Properties.Name -contains 'UnrecognizedRecordCount') {
+        $buildUnrecognizedRecordCount += [int]$session.UnrecognizedRecordCount
+    }
+}
+
 $sessions = @($sessionsList | Sort-Object Cwd, @{ Expression = "UpdatedAt"; Descending = $true })
+$searchLimitSummary = Set-GlobalSearchTextLimits -Sessions $sessions
 $groups = @($sessions | Group-Object Cwd | Sort-Object Name)
 $totalSessions = $sessions.Count
 $totalWorkspaces = $groups.Count
@@ -2187,7 +4031,8 @@ $appData = [ordered]@{
 }
 
 $searchPayload = [ordered]@{
-    version = 1
+    version = 4
+    part = 'questions'
     generatedAt = $generatedAt
     sessions = @($sessions | ForEach-Object {
         [ordered]@{
@@ -2197,14 +4042,27 @@ $searchPayload = [ordered]@{
             cwd = [string]$_.Cwd
             title = [string]$_.Title
             path = [string]$_.Path
-            searchText = if ($_.PSObject.Properties.Name -contains 'SearchText') { [string]$_.SearchText } else { Get-SessionSearchText $_ }
+            questionTexts = @($_.QuestionSearchTexts)
+        }
+    })
+}
+
+$otherSearchPayload = [ordered]@{
+    version = 4
+    part = 'other'
+    generatedAt = $generatedAt
+    sessions = @($sessions | ForEach-Object {
+        [ordered]@{
+            key = [string]$_.Path
+            otherText = [string]$_.OtherSearchText
         }
     })
 }
 
 $cachePayload = [ordered]@{
-    cacheVersion = 3
+    cacheVersion = 5
     builderVersion = $builderVersion
+    parserRevision = $parserRevision
     generatedAt = $generatedAt
     sourceSignature = $sourceSignature
     files = @($sessions | ForEach-Object { New-CacheRecordFromSession $_ })
@@ -2220,7 +4078,6 @@ Get-ChildItem -LiteralPath $detailRoot -File -Filter '*.json' | ForEach-Object {
 $json = $appData | ConvertTo-Json -Depth 100 -Compress
 $json = $json -replace '</script', '<\/script'
 
-$templatePath = Join-Path $PSScriptRoot 'templates\CodexChatIndex.template.html'
 $html = Render-HtmlTemplate -TemplatePath $templatePath -Values ([ordered]@{
     BUILDER_VERSION = [string]$builderVersion
     INDEX_URL = [string]$indexUrlForScript
@@ -2234,6 +4091,7 @@ $html = Render-HtmlTemplate -TemplatePath $templatePath -Values ([ordered]@{
 Write-Utf8FileAtomic -Path $resolvedOutput -Value $html
 Write-Utf8FileAtomic -Path $dataOutput -Value ($appData | ConvertTo-Json -Depth 100)
 Write-Utf8FileAtomic -Path $searchOutput -Value ($searchPayload | ConvertTo-Json -Depth 100)
+Write-Utf8FileAtomic -Path $otherSearchOutput -Value ($otherSearchPayload | ConvertTo-Json -Depth 100)
 Write-Utf8FileAtomic -Path $cacheOutput -Value ($cachePayload | ConvertTo-Json -Depth 100)
 
 $buildStopwatch.Stop()
@@ -2246,6 +4104,7 @@ $summary = [pscustomobject]@{
     OutputPath = $resolvedOutput
     DataPath = $dataOutput
     SearchPath = $searchOutput
+    OtherSearchPath = $otherSearchOutput
     CachePath = $cacheOutput
     DetailRoot = $detailRoot
     ScannedCount = $scannedCount
@@ -2258,6 +4117,12 @@ $summary = [pscustomobject]@{
     Workspaces = $totalWorkspaces
     Archived = $archivedCount
     ImageReferences = $imageRefCount
+    UnassignedRecordCount = $buildUnassignedRecordCount
+    UnrecognizedRecordCount = $buildUnrecognizedRecordCount
+    ToolRawSearchOriginalChars = [int64]$searchLimitSummary.ToolRawOriginalChars
+    ToolRawSearchIndexedChars = [int64]$searchLimitSummary.ToolRawIndexedChars
+    ToolRawSearchTruncatedEvents = [int]$searchLimitSummary.ToolRawTruncatedEvents
+    SearchTextIndexedChars = [int64]$searchLimitSummary.TotalIndexedChars
     Notice = $cacheNotice
 }
 

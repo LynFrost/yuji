@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>语迹 - AI 对话记录浏览器</title>
+  <title>语迹</title>
   <style>
     :root {
       --bg: #f3ede3;
@@ -64,12 +64,6 @@
       line-height: 1.1;
       flex: none;
     }
-    .app-subtitle {
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
     .version-badge {
       display: inline-flex;
       align-items: center;
@@ -111,7 +105,7 @@
       white-space: nowrap;
     }
     .source-selector select {
-      max-width: min(42vw, 260px);
+      max-width: min(48vw, 340px);
       border: 0;
       background: transparent;
       color: var(--accent);
@@ -160,6 +154,16 @@
     .refresh-btn:hover {
       border-color: var(--accent);
       background: linear-gradient(180deg, rgba(239,220,199,.98), rgba(226,198,170,.98));
+    }
+    .sync-btn[hidden] { display: none !important; }
+    .sync-btn.is-error {
+      border-color: #a23c32;
+      background: #f7d9d3;
+      color: #842b23;
+    }
+    .sync-btn:disabled {
+      cursor: default;
+      opacity: .55;
     }
     .shell {
       position: relative;
@@ -543,6 +547,7 @@
     }
     .note-menu[hidden],
     .note-modal[hidden],
+    .cloud-modal[hidden],
     .image-preview-modal[hidden],
     .note-tooltip[hidden] {
       display: none !important;
@@ -556,6 +561,16 @@
       justify-content: center;
       padding: 22px;
       background: rgba(36,27,19,.28);
+    }
+    .cloud-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 2900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 22px;
+      background: rgba(36,27,19,.32);
     }
     .note-modal-card {
       width: min(680px, calc(100vw - 44px));
@@ -623,6 +638,104 @@
       border-color: rgba(143,77,31,.55);
       background: linear-gradient(180deg, rgba(233,213,191,.98), rgba(223,193,164,.98));
       color: #6f3813;
+    }
+    .cloud-settings-card {
+      width: min(760px, calc(100vw - 44px));
+      max-height: min(90vh, 860px);
+    }
+    .cloud-settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 14px;
+    }
+    .cloud-settings-grid label {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .cloud-settings-grid label.cloud-field-wide { grid-column: 1 / -1; }
+    .cloud-settings-grid input {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: #fffdf7;
+      color: var(--ink);
+      font: inherit;
+    }
+    .cloud-check-row {
+      display: flex !important;
+      grid-template-columns: none !important;
+      align-items: center;
+      gap: 8px !important;
+      padding-top: 4px;
+    }
+    .cloud-check-row input { width: auto; }
+    .cloud-security-note,
+    .cloud-status {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .cloud-status.is-error { color: #8b2d24; }
+    .cloud-task {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px 12px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .cloud-task progress { width: 100%; height: 10px; }
+    #webdavTaskText {
+      grid-column: 1 / -1;
+      white-space: pre-line;
+      overflow-wrap: anywhere;
+    }
+    .cloud-cache-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .cloud-cache-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(217,200,172,.55);
+      font-size: 12px;
+    }
+    .cloud-cache-row button,
+    .cloud-task button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 9px;
+      background: var(--paper);
+      color: var(--accent);
+      cursor: pointer;
+    }
+    .cloud-secondary-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .cloud-secondary-actions button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      background: var(--paper);
+      color: var(--muted);
+      cursor: pointer;
     }
     .note-tooltip {
       position: fixed;
@@ -751,9 +864,103 @@
       color: #6f3813;
       font-weight: 800;
     }
-    .reader-toolbar input[type="search"] {
+    .search-history-control {
+      position: relative;
       flex: 1 1 220px;
       min-width: 180px;
+    }
+    .reader-toolbar .search-history-control input[type="search"] {
+      width: 100%;
+      min-width: 0;
+      padding-right: 50px;
+    }
+    .search-history-button {
+      position: absolute;
+      top: 50%;
+      right: 5px;
+      transform: translateY(-50%);
+      min-width: 38px;
+      padding: 5px 7px !important;
+      border-color: transparent !important;
+      background: transparent !important;
+      color: var(--muted) !important;
+      box-shadow: none !important;
+    }
+    .search-history-button:hover,
+    .search-history-button[aria-expanded="true"] {
+      border-color: rgba(143,77,31,.22) !important;
+      background: rgba(233,213,191,.48) !important;
+      color: var(--accent) !important;
+    }
+    .search-history-button:disabled {
+      cursor: default;
+      opacity: .42;
+    }
+    .search-history-menu {
+      position: absolute;
+      z-index: 2400;
+      top: calc(100% + 6px);
+      left: 0;
+      width: 100%;
+      max-height: 50vh;
+      overflow-y: auto;
+      padding: 6px;
+      border: 1px solid rgba(143,77,31,.24);
+      border-radius: 10px;
+      background: var(--paper);
+      box-shadow: 0 18px 44px rgba(60,44,27,.22);
+    }
+    .search-history-menu[hidden] {
+      display: none !important;
+    }
+    .search-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .search-history-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: stretch;
+      gap: 4px;
+      border-radius: 8px;
+    }
+    .search-history-item.is-active {
+      background: var(--accent-soft);
+    }
+    .reader-toolbar .search-history-value,
+    .reader-toolbar .search-history-delete,
+    .reader-toolbar .search-history-clear {
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+    }
+    .reader-toolbar .search-history-value {
+      min-width: 0;
+      padding: 8px 9px;
+      color: var(--ink);
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .reader-toolbar .search-history-delete {
+      align-self: center;
+      padding: 7px 9px;
+      color: var(--muted);
+    }
+    .reader-toolbar .search-history-item.is-active .search-history-value,
+    .reader-toolbar .search-history-item.is-active .search-history-delete,
+    .reader-toolbar .search-history-item:hover .search-history-value,
+    .reader-toolbar .search-history-item:hover .search-history-delete {
+      color: var(--accent);
+    }
+    .reader-toolbar .search-history-clear {
+      width: 100%;
+      margin-top: 5px;
+      padding: 8px 9px;
+      border-top: 1px solid var(--line);
+      border-radius: 0 0 8px 8px;
+      color: var(--muted);
     }
     .toolbar-segment {
       display: inline-flex;
@@ -770,6 +977,10 @@
     .toolbar-segment--search {
       border-color: rgba(143,77,31,.24);
       background: rgba(233,213,191,.34);
+    }
+    .toolbar-segment--field {
+      border-color: rgba(64,106,128,.28);
+      background: rgba(232,242,247,.64);
     }
     .toolbar-segment--tools {
       flex: 0 1 auto;
@@ -833,12 +1044,6 @@
       flex-direction: column;
       width: fit-content;
       max-width: min(860px, 92%);
-      content-visibility: auto;
-      contain-intrinsic-size: 0 160px;
-    }
-    .transcript.is-programmatic-scroll .message,
-    .transcript.is-programmatic-scroll .collapsed-group {
-      content-visibility: visible;
     }
     .message.user {
       align-self: flex-end;
@@ -862,6 +1067,14 @@
       box-shadow: none;
     }
     .message--final { background: rgba(241,246,234,.92); }
+    .message.is-search-direct-hit {
+      border-left: 3px solid rgba(183,121,31,.82);
+      background: rgba(255,248,226,.64);
+    }
+    .message.is-search-companion {
+      border-left: 2px solid rgba(122,109,92,.30);
+      background: rgba(247,245,240,.34);
+    }
     .message--commentary {
       width: 100%;
       max-width: 100%;
@@ -873,7 +1086,6 @@
       max-width: 100%;
       background: rgba(255,255,255,.72);
       font-family: "Cascadia Code","Consolas",monospace;
-      contain-intrinsic-size: 0 220px;
     }
     .message-blocks { display: flex; flex-direction: column; gap: 12px; }
     .code-block {
@@ -886,8 +1098,6 @@
     .collapsed-group {
       align-self: stretch;
       max-width: min(980px, 96%);
-      content-visibility: auto;
-      contain-intrinsic-size: 0 96px;
     }
     .collapsed-group summary { cursor: pointer; color: var(--accent); }
     .message-head {
@@ -910,18 +1120,6 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: .08em;
-    }
-    .context-label {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 6px;
-      border: 1px solid rgba(143,77,31,.22);
-      border-radius: 999px;
-      color: var(--accent);
-      background: rgba(233,213,191,.38);
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0;
     }
     .message-body {
       white-space: pre-wrap;
@@ -958,6 +1156,17 @@
       border-radius: 8px;
       object-fit: contain;
     }
+    .message-image-status {
+      display: inline-flex;
+      min-height: 34px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .message-image-status[hidden] {
+      display: none;
+    }
     .image-preview-modal {
       position: fixed;
       inset: 0;
@@ -969,15 +1178,96 @@
       background: rgba(24,18,12,.72);
       cursor: zoom-out;
     }
-    .image-preview-modal img {
+    .image-preview-stage {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: min(calc(100vw - 96px), 1440px);
+      height: calc(100vh - 76px);
+      max-width: 100%;
+      max-height: 100%;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      cursor: default;
+    }
+    .image-preview-stage img {
       display: block;
-      max-width: min(96vw, 1440px);
-      max-height: calc(100vh - 92px);
+      max-width: 100%;
+      max-height: 100%;
       border-radius: 8px;
       background: rgba(255,255,255,.08);
       box-shadow: 0 24px 76px rgba(0,0,0,.34);
       object-fit: contain;
+      transform-origin: center center;
+      user-select: none;
+      will-change: transform;
+      cursor: inherit;
+      -webkit-user-drag: none;
+    }
+    .image-preview-stage.is-zoomed {
+      cursor: grab;
+    }
+    .image-preview-stage.is-dragging {
+      cursor: grabbing;
+    }
+    .image-preview-nav {
+      position: absolute;
+      top: 50%;
+      z-index: 2;
+      min-width: 44px;
+      min-height: 44px;
+      transform: translateY(-50%);
+      border: 1px solid rgba(255,255,255,.48);
+      border-radius: 8px;
+      background: rgba(255,255,255,.88);
+      color: #4d2d16;
+      font: inherit;
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 12px 30px rgba(0,0,0,.22);
+    }
+    .image-preview-nav--prev {
+      left: 18px;
+    }
+    .image-preview-nav--next {
+      right: 18px;
+    }
+    .image-preview-nav:disabled {
+      opacity: .38;
       cursor: default;
+    }
+    .image-preview-count {
+      position: absolute;
+      left: 50%;
+      bottom: 10px;
+      transform: translateX(-50%);
+      padding: 5px 9px;
+      border-radius: 7px;
+      background: rgba(24,18,12,.76);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .image-preview-status {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      margin: 0;
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: rgba(24,18,12,.82);
+      color: #fff;
+      font-size: 13px;
+    }
+    .image-preview-count[hidden],
+    .image-preview-status[hidden],
+    .image-preview-nav[hidden] {
+      display: none;
     }
     .image-preview-close {
       position: absolute;
@@ -994,7 +1284,8 @@
       cursor: pointer;
       box-shadow: 0 12px 30px rgba(0,0,0,.22);
     }
-    .image-preview-close:focus-visible {
+    .image-preview-close:focus-visible,
+    .image-preview-nav:focus-visible {
       outline: 3px solid rgba(255,214,102,.88);
       outline-offset: 2px;
     }
@@ -1181,7 +1472,17 @@
         border-left: 0;
         border-top: 1px solid var(--line);
       }
-      }
+    }
+    @media (max-width: 640px) {
+      #viewerToolbar { padding-right: 72px; }
+      .image-preview-stage { width: calc(100vw - 24px); }
+      .image-preview-nav--prev { left: 8px; }
+      .image-preview-nav--next { right: 8px; }
+      .cloud-settings-grid { grid-template-columns: minmax(0, 1fr); }
+      .cloud-settings-grid label.cloud-field-wide { grid-column: auto; }
+      .cloud-cache-row { grid-template-columns: minmax(0, 1fr) auto; }
+      .cloud-cache-row button { grid-column: 1 / -1; }
+    }
   </style>
 </head>
 <body>
@@ -1189,7 +1490,6 @@
       <div class="header-row">
         <div class="header-main">
   <h1>语迹 <span class="version-badge">{{BUILDER_VERSION}}</span></h1>
-        <span class="app-subtitle">AI 对话记录浏览器</span>
         <div class="stats">
           <span class="stat" id="statSessions">会话：{{TOTAL_SESSIONS}}</span>
           <span class="stat" id="statWorkspaces">目录：{{TOTAL_WORKSPACES}}</span>
@@ -1198,7 +1498,9 @@
           <span class="stat" id="statGenerated" title="生成时间：{{GENERATED_AT}}" aria-label="生成时间：{{GENERATED_AT}}">{{GENERATED_AT}}</span>
         </div>
       </div>
-      <label class="source-selector" for="sourceSelect">来源：<select id="sourceSelect" aria-label="选择聊天记录来源"><option value="local-codex">本机 Codex</option></select></label>
+      <label class="source-selector" for="sourceSelect"><select id="sourceSelect" aria-label="选择聊天记录来源"><option value="local-codex">本机 Codex</option></select></label>
+      <button type="button" id="cloudSettingsButton" class="refresh-btn" title="WebDAV 云设置">云设置</button>
+      <button type="button" id="syncButton" class="refresh-btn sync-btn" hidden>上传</button>
       <button type="button" id="refreshButton" class="refresh-btn" onclick="refreshIndex()">刷新</button>
       <button type="button" id="rebuildButton" class="refresh-btn" onclick="rebuildIndex()" title="重新扫描和解析全部聊天记录，耗时可能较长" aria-label="全量重建">全量</button>
       <button type="button" id="globalSidebarToggleButton" class="refresh-btn sidebar-toggle-btn" title="一键收起目录和标题" aria-label="一键收起目录和标题">收起</button>
@@ -1292,14 +1594,24 @@
       <section class="viewer">
         <div id="viewerHead" class="viewer-head"></div>
       <div id="viewerToolbar" class="reader-toolbar hidden">
-        <input id="viewerSearch" type="search" placeholder="搜索...">
+        <div id="viewerSearchHistoryControl" class="search-history-control">
+          <input id="viewerSearch" type="search" placeholder="搜索..." autocomplete="off" aria-controls="viewerSearchHistoryMenu" aria-expanded="false">
+          <button type="button" id="viewerSearchHistoryButton" class="search-history-button" title="搜索历史" aria-label="搜索历史" aria-controls="viewerSearchHistoryMenu" aria-expanded="false">历史</button>
+          <div id="viewerSearchHistoryMenu" class="search-history-menu" role="listbox" aria-label="搜索历史" hidden>
+            <div id="viewerSearchHistoryList" class="search-history-list"></div>
+            <button type="button" id="viewerSearchHistoryClear" class="search-history-clear">清空历史</button>
+          </div>
+        </div>
         <div class="toolbar-segment toolbar-segment--search" aria-label="搜索范围">
-          <button type="button" data-search-scope="all" title="搜索当前来源下全部会话">全部</button>
-          <button type="button" data-search-scope="current" title="只搜索当前打开会话">当前</button>
+          <button type="button" data-search-scope="all" aria-pressed="true" title="搜索当前来源下全部会话">全部</button>
+          <button type="button" data-search-scope="current" aria-pressed="false" title="只搜索当前打开会话">当前</button>
+        </div>
+        <div class="toolbar-segment toolbar-segment--field" aria-label="搜索字段">
+          <button type="button" data-search-field="questions" aria-pressed="false" title="只搜索用户提问正文">提问</button>
         </div>
         <div class="toolbar-segment toolbar-segment--view" aria-label="显示模式">
           <button type="button" data-view-mode="all">全部</button>
-          <button type="button" data-view-mode="questions" title="只看用户提问">提问</button>
+          <button type="button" data-view-mode="questions" title="只显示用户提问">提问</button>
         </div>
         <div class="toolbar-segment toolbar-segment--tools" aria-label="会话工具">
           <button type="button" id="questionNext" data-question-nav="bottom" title="到达当前会话底部">底部</button>
@@ -1321,7 +1633,13 @@
     <div id="noteContextMenu" class="note-menu" hidden></div>
     <div id="imagePreviewModal" class="image-preview-modal" role="dialog" aria-modal="true" aria-label="图片预览" hidden>
       <button type="button" id="imagePreviewClose" class="image-preview-close">关闭</button>
-      <img id="imagePreviewImage" alt="">
+      <button type="button" id="imagePreviewPrev" class="image-preview-nav image-preview-nav--prev" aria-label="上一张图片" hidden>←</button>
+      <div id="imagePreviewStage" class="image-preview-stage">
+        <img id="imagePreviewImage" alt="" draggable="false">
+        <output id="imagePreviewCount" class="image-preview-count" aria-live="polite" hidden></output>
+        <p id="imagePreviewStatus" class="image-preview-status" role="status" hidden></p>
+      </div>
+      <button type="button" id="imagePreviewNext" class="image-preview-nav image-preview-nav--next" aria-label="下一张图片" hidden>→</button>
     </div>
     <div id="noteModal" class="note-modal" hidden>
       <div class="note-modal-card" role="dialog" aria-modal="true" aria-labelledby="noteModalTitle">
@@ -1335,6 +1653,50 @@
         </div>
       </div>
     </div>
+    <div id="webdavModal" class="cloud-modal" hidden>
+      <form id="webdavForm" class="note-modal-card cloud-settings-card" role="dialog" aria-modal="true" aria-labelledby="webdavModalTitle">
+        <h2 id="webdavModalTitle">云设置</h2>
+        <div class="cloud-settings-grid">
+          <label class="cloud-field-wide">WebDAV URL
+            <input id="webdavBaseUrl" type="url" autocomplete="url" value="https://dav.jianguoyun.com/dav/">
+          </label>
+          <label>用户名
+            <input id="webdavUsername" type="text" autocomplete="username">
+          </label>
+          <label>密码
+            <input id="webdavPassword" type="password" autocomplete="new-password" placeholder="未保存">
+          </label>
+          <label>远端根目录
+            <input id="webdavRemoteRoot" type="text" value="YujiSync">
+          </label>
+          <label>设备显示名
+            <input id="webdavDeviceName" type="text">
+          </label>
+          <label class="cloud-check-row cloud-field-wide">
+            <input id="webdavAllowHttp" type="checkbox">允许局域网 HTTP
+          </label>
+        </div>
+        <p class="cloud-security-note">聊天正文、备注和来源路径通过 HTTPS 同步，但没有端到端加密。</p>
+        <p id="webdavStatus" class="cloud-status" role="status" aria-live="polite"></p>
+        <div class="cloud-task">
+          <progress id="webdavTaskProgress" max="100" value="0"></progress>
+          <button type="button" id="webdavCancelTask" hidden>取消任务</button>
+          <span id="webdavTaskText">当前没有传输任务</span>
+        </div>
+        <div id="webdavCacheList" class="cloud-cache-list"></div>
+        <div class="cloud-secondary-actions">
+          <button type="button" id="webdavDisableButton">停用 WebDAV</button>
+          <button type="button" id="webdavClearAllButton">清除全部云端缓存</button>
+          <button type="button" id="webdavUnregisterButton">从云端注销本设备</button>
+          <label class="cloud-check-row"><input id="webdavUnregisterClearCache" type="checkbox">同时清除本机云端缓存</label>
+        </div>
+        <div class="note-modal-actions">
+          <button type="button" id="webdavCheckButton">检查连通性</button>
+          <button type="button" id="webdavCloseButton">取消</button>
+          <button type="submit" data-note-save>保存</button>
+        </div>
+      </form>
+    </div>
     <div id="noteTooltip" class="note-tooltip" hidden>
       <span class="note-tooltip-label">备注</span>
       <div id="noteTooltipBody" class="note-tooltip-body"></div>
@@ -1346,6 +1708,11 @@
     const SOURCE_DATA_API_URL = '/api/source-data';
     const SEARCH_API_URL = '/api/search';
     const NOTES_API_URL = '/api/notes';
+    const SESSION_IMAGE_API_URL = '/api/session-image';
+    const SESSION_TOKEN_API_URL = '/api/session-token';
+    const SOURCE_STATUS_API_URL = '/api/source-status';
+    const WEBDAV_API_ROOT = '/api/webdav';
+    let apiSessionToken = '';
     let APP = null;
     let CURRENT_DETAIL = null;
     const sessionCache = new Map();
@@ -1372,6 +1739,10 @@
     };
     const globalSidebarToggleButton = document.getElementById('globalSidebarToggleButton');
     const sourceSelect = document.getElementById('sourceSelect');
+    const cloudSettingsButton = document.getElementById('cloudSettingsButton');
+    const syncButton = document.getElementById('syncButton');
+    const refreshButton = document.getElementById('refreshButton');
+    const rebuildButton = document.getElementById('rebuildButton');
     const workspaceFilterInput = document.getElementById('workspaceFilter');
     const sessionFilterInput = document.getElementById('sessionFilter');
     const workspaceProviderFilter = document.getElementById('workspaceProviderFilter');
@@ -1385,6 +1756,11 @@
     const viewerHead = document.getElementById('viewerHead');
     const viewerToolbar = document.getElementById('viewerToolbar');
     const viewerSearchInput = document.getElementById('viewerSearch');
+    const viewerSearchHistoryControl = document.getElementById('viewerSearchHistoryControl');
+    const viewerSearchHistoryButton = document.getElementById('viewerSearchHistoryButton');
+    const viewerSearchHistoryMenu = document.getElementById('viewerSearchHistoryMenu');
+    const viewerSearchHistoryList = document.getElementById('viewerSearchHistoryList');
+    const viewerSearchHistoryClear = document.getElementById('viewerSearchHistoryClear');
     const viewerToolbarActions = document.getElementById('viewerToolbarActions');
     const transcript = document.getElementById('transcript');
     const replyComposer = document.getElementById('replyComposer');
@@ -1403,13 +1779,44 @@
     const imagePreviewModal = document.getElementById('imagePreviewModal');
     const imagePreviewImage = document.getElementById('imagePreviewImage');
     const imagePreviewClose = document.getElementById('imagePreviewClose');
+    const imagePreviewPrev = document.getElementById('imagePreviewPrev');
+    const imagePreviewNext = document.getElementById('imagePreviewNext');
+    const imagePreviewStage = document.getElementById('imagePreviewStage');
+    const imagePreviewCount = document.getElementById('imagePreviewCount');
+    const imagePreviewStatus = document.getElementById('imagePreviewStatus');
+    const webdavModal = document.getElementById('webdavModal');
+    const webdavForm = document.getElementById('webdavForm');
+    const webdavBaseUrl = document.getElementById('webdavBaseUrl');
+    const webdavUsername = document.getElementById('webdavUsername');
+    const webdavPassword = document.getElementById('webdavPassword');
+    const webdavRemoteRoot = document.getElementById('webdavRemoteRoot');
+    const webdavDeviceName = document.getElementById('webdavDeviceName');
+    const webdavAllowHttp = document.getElementById('webdavAllowHttp');
+    const webdavStatus = document.getElementById('webdavStatus');
+    const webdavTaskProgress = document.getElementById('webdavTaskProgress');
+    const webdavTaskText = document.getElementById('webdavTaskText');
+    const webdavCancelTask = document.getElementById('webdavCancelTask');
+    const webdavCacheList = document.getElementById('webdavCacheList');
+    const webdavCheckButton = document.getElementById('webdavCheckButton');
+    const webdavCloseButton = document.getElementById('webdavCloseButton');
+    const webdavDisableButton = document.getElementById('webdavDisableButton');
+    const webdavClearAllButton = document.getElementById('webdavClearAllButton');
+    const webdavUnregisterButton = document.getElementById('webdavUnregisterButton');
+    const webdavUnregisterClearCache = document.getElementById('webdavUnregisterClearCache');
     const SORT_STORAGE_KEY = 'codex-chat-index-sort-v1';
     const MENU_SELECTOR = '.sort-menu';
     const MAX_REPLY_LINES = 20;
     const MAX_NOTE_LENGTH = 10000;
     const CURRENT_SCOPE_SEARCH_DELAY_MS = 160;
+    const SEARCH_HISTORY_STORAGE_KEY = 'yuji-search-history-v1';
+    const SEARCH_HISTORY_LIMIT = 20;
+    const SEARCH_HISTORY_CLEAR_CONFIRM_MS = 5000;
     const replyDrafts = new Map();
     let viewerSearchInputIsComposing = false;
+    let searchHistoryItems = [];
+    let searchHistoryHighlightIndex = -1;
+    let searchHistoryClearTimer = 0;
+    let searchHistoryStorageWritable = true;
     let replyInputIsComposing = false;
     let replyComposerUpdateFrame = 0;
     let replyInputMetrics = null;
@@ -1419,23 +1826,36 @@
       available: true
     };
     let activeNoteTarget = null;
+    let webdavState = {
+      settings: null,
+      sourceStatus: null,
+      task: null,
+      pollTimer: 0,
+      lastTaskSignature: '',
+      lastCatalogCheckAt: 0,
+      lastStatusCheckAt: 0,
+      reloadingDownload: false
+    };
 
     let filterState = {
       provider: ['all'],
       source: ['all']
     };
     let viewerViewMode = 'all';
+    let viewerSearchQuestionsOnly = false;
     let viewerSearchScope = 'all';
     let viewerSearchQuery = '';
     let currentScopeSearchTimer = 0;
     let selectedQuestionKey = null;
     let selectedQuestionKeyIsTemporary = false;
     let pendingQuestionFocus = 'last';
+    let pendingAnswerFocusQuestionKey = null;
     const sessionProgressAnchors = new Map();
     const MAX_PROGRESS_ANCHORS = 200;
     let progressRestoreToken = 0;
     let globalSearchState = {
       query: '',
+      field: 'all',
       pending: false,
       matchKeys: null,
       requestId: 0,
@@ -1444,18 +1864,405 @@
     };
 
     function getCurrentSourceId() {
-      return currentSourceId || 'local-codex';
+      return typeof currentSourceId !== 'undefined' && currentSourceId ? currentSourceId : 'local-codex';
     }
 
     function getCurrentSource() {
       const id = getCurrentSourceId();
-      const sources = Array.isArray(sourceState.sources) ? sourceState.sources : [];
-      return sources.find(source => source && source.id === id) || (APP && APP.source) || sources[0] || { id: 'local-codex', label: '本机 Codex', type: 'local-codex' };
+      const sources = typeof sourceState !== 'undefined' && sourceState && Array.isArray(sourceState.sources) ? sourceState.sources : [];
+      const appSource = typeof APP !== 'undefined' && APP ? APP.source : null;
+      return sources.find(source => source && source.id === id) || appSource || sources[0] || { id: 'local-codex', label: '本机 Codex', type: 'local-codex' };
+    }
+
+    async function loadSessionToken() {
+      if (typeof location !== 'undefined' && location.protocol === 'file:') return '';
+      const response = await fetch(SESSION_TOKEN_API_URL, { cache: 'no-store' });
+      if (!response.ok) throw new Error('session token HTTP ' + response.status);
+      const payload = await response.json();
+      apiSessionToken = String((payload && payload.token) || '');
+      if (!apiSessionToken) throw new Error('session token missing');
+      return apiSessionToken;
+    }
+
+    function mutationFetch(url, options) {
+      if (!apiSessionToken) return Promise.reject(new Error('本地会话令牌尚未加载'));
+      const request = Object.assign({}, options || {});
+      const headers = new Headers(request.headers || {});
+      headers.set('X-Yuji-Session-Token', apiSessionToken);
+      request.headers = headers;
+      return fetch(url, request);
+    }
+
+    function fallbackSourceCapabilities(source) {
+      const type = String((source && source.type) || '');
+      if (type === 'local-codex' || type === 'local-claude') {
+        return { canRefresh: true, canQuickRefresh: true, canRebuild: true, canUpload: true, canDownload: false, canResume: true, canReply: true, canEditNotes: true, canResolveLocalImages: true, isReadOnly: false };
+      }
+      if (type === 'webdav-codex' || type === 'webdav-claude') {
+        return { canRefresh: false, canQuickRefresh: false, canRebuild: true, canUpload: false, canDownload: true, canResume: false, canReply: false, canEditNotes: false, canResolveLocalImages: false, isReadOnly: true };
+      }
+      return { canRefresh: true, canQuickRefresh: true, canRebuild: true, canUpload: false, canDownload: false, canResume: false, canReply: false, canEditNotes: true, canResolveLocalImages: true, isReadOnly: false };
+    }
+
+    function getSourceCapability(name, source) {
+      const resolved = source || getCurrentSource();
+      const capabilities = resolved && resolved.capabilities && typeof resolved.capabilities === 'object'
+        ? resolved.capabilities
+        : fallbackSourceCapabilities(resolved);
+      return !!capabilities[name];
     }
 
     function isExternalSource() {
+      return !getSourceCapability('canReply');
+    }
+
+    function isWebdavSource(source) {
+      const type = String(((source || getCurrentSource()) && (source || getCurrentSource()).type) || '');
+      return type === 'webdav-codex' || type === 'webdav-claude';
+    }
+
+    function currentSyncAction() {
+      if (getSourceCapability('canUpload')) return 'upload';
+      if (getSourceCapability('canDownload')) return 'download';
+      return 'none';
+    }
+
+    function formatBytes(value) {
+      let bytes = Math.max(0, Number(value) || 0);
+      const units = ['B', 'KiB', 'MiB', 'GiB'];
+      let unit = 0;
+      while (bytes >= 1024 && unit < units.length - 1) {
+        bytes /= 1024;
+        unit++;
+      }
+      return (unit ? bytes.toFixed(bytes >= 10 ? 1 : 2) : Math.round(bytes)) + ' ' + units[unit];
+    }
+
+    function setWebdavStatus(message, error) {
+      if (!webdavStatus) return;
+      webdavStatus.textContent = String(message || '');
+      webdavStatus.classList.toggle('is-error', !!error);
+    }
+
+    function formatWebdavCleanupFailures(summary, failed) {
+      const failures = Array.isArray(failed) ? failed : [];
+      const details = failures.map((item, index) => {
+        const current = item && typeof item === 'object' ? item : {};
+        return [
+          (index + 1) + '. 来源：' + String(current.sourceId || '未知来源'),
+          '区域：' + String(current.area || '未知区域'),
+          '路径：' + String(current.path || '未知路径'),
+          '原因：' + String(current.reason || '未知原因'),
+        ].join('\n');
+      });
+      return [String(summary || '本机缓存清理失败')].concat(details).join('\n\n');
+    }
+
+    function renderWebdavCache() {
+      if (!webdavCacheList) return;
+      const entries = webdavState.settings && Array.isArray(webdavState.settings.cache) ? webdavState.settings.cache : [];
+      if (!entries.length) {
+        webdavCacheList.innerHTML = '';
+        return;
+      }
+      webdavCacheList.innerHTML = entries.map(entry =>
+        '<div class="cloud-cache-row"><span>' + escapeHtml(entry.label || entry.sourceId || '') + '</span>' +
+        '<span>' + escapeHtml(formatBytes(entry.bytes)) + '</span>' +
+        '<button type="button" data-clear-cloud-cache="' + escapeHtml(entry.sourceId || '') + '">清除</button></div>'
+      ).join('');
+    }
+
+    function formatWebdavTaskError(task) {
+      const current = task && typeof task === 'object' ? task : {};
+      const actionLabels = { upload: '上传', download: '下载' };
+      const lines = [
+        '操作：' + (actionLabels[current.action] || String(current.action || '未知操作')),
+        '阶段：' + String(current.stage || '未知阶段')
+      ];
+      const httpStatus = Number(current.httpStatus) || 0;
+      if (httpStatus) lines.push('HTTP 状态：' + httpStatus);
+      lines.push('原因：' + String(current.errorReason || current.errorSummary || '未知错误'));
+      const retryAfter = String(current.retryAfter || '').trim();
+      if (retryAfter) lines.push('Retry-After: ' + retryAfter);
+      if (current.updatedAt) lines.push('发生时间：' + String(current.updatedAt));
+      if (current.errorTarget) lines.push('脱敏地址：' + String(current.errorTarget));
+      lines.push('建议检查：服务器地址、账号、应用密码、远端目录、私网 HTTP 许可和网络连接。');
+      return lines.join('\n');
+    }
+
+    function renderWebdavTask(task) {
+      webdavState.task = task && typeof task === 'object' ? task : null;
+      const current = webdavState.task || { status: 'idle', percent: 0 };
+      if (webdavTaskProgress) webdavTaskProgress.value = Math.max(0, Math.min(100, Number(current.percent) || 0));
+      if (webdavTaskText) {
+        if (current.status === 'idle') {
+          webdavTaskText.textContent = '当前没有传输任务';
+        } else if (current.status === 'error') {
+          webdavTaskText.textContent = formatWebdavTaskError(current) + (current.warning ? '；' + current.warning : '');
+        } else if (current.warning) {
+          webdavTaskText.textContent = String(current.warning);
+        } else {
+          const counts = current.bytesTotal
+            ? formatBytes(current.bytesDone) + ' / ' + formatBytes(current.bytesTotal)
+            : ((current.filesDone || 0) + ' / ' + (current.filesTotal || 0) + ' 个文件');
+          webdavTaskText.textContent = [current.stage || current.status, counts, (current.percent || 0) + '%'].filter(Boolean).join(' · ');
+        }
+      }
+      if (webdavCancelTask) {
+        webdavCancelTask.hidden = !current.canCancel;
+        webdavCancelTask.disabled = !current.canCancel || !!current.cancelRequested;
+      }
+      updateTopSourceActions();
+    }
+
+    function updateTopSourceActions() {
       const source = getCurrentSource();
-      return !!(source && source.type === 'external-codex-jsonl');
+      const status = webdavState.sourceStatus;
+      const task = webdavState.task;
+      const settings = webdavState.settings;
+      if (refreshButton) {
+        const refreshState = status && status.refresh ? status.refresh.state : '';
+        refreshButton.disabled = !getSourceCapability('canRefresh', source) || refreshState === 'latest' || refreshState === 'checking';
+        refreshButton.classList.toggle('is-error', refreshState === 'error');
+      }
+      if (rebuildButton) {
+        rebuildButton.disabled = !getSourceCapability('canRebuild', source) || (isWebdavSource(source) && !source.downloaded);
+      }
+      if (!syncButton) return;
+      const action = currentSyncAction();
+      const enabled = !!(settings && settings.enabled);
+      syncButton.hidden = !enabled || action === 'none';
+      if (syncButton.hidden) return;
+      const label = action === 'upload' ? '上传' : '下载';
+      const runningHere = task && ['running', 'cancelling'].includes(task.status) && task.sourceId === getCurrentSourceId();
+      const syncState = status && status.sync ? status.sync.state : '';
+      syncButton.textContent = runningHere ? (label + ' ' + (task.percent || 0) + '%') : label;
+      syncButton.disabled = runningHere || syncState === 'latest' || syncState === 'checking';
+      syncButton.classList.toggle('is-loading', !!runningHere);
+      syncButton.classList.toggle('is-error', syncState === 'error');
+      syncButton.title = status && status.sync ? String(status.sync.reason || '') : '';
+    }
+
+    function applyWebdavSettings(settings) {
+      webdavState.settings = settings && typeof settings === 'object' ? settings : null;
+      const value = webdavState.settings || {};
+      if (webdavBaseUrl) webdavBaseUrl.value = value.baseUrl || 'https://dav.jianguoyun.com/dav/';
+      if (webdavUsername) webdavUsername.value = value.username || '';
+      if (webdavPassword) {
+        webdavPassword.value = '';
+        webdavPassword.placeholder = value.passwordSaved ? '已保存，留空不修改' : '未保存';
+      }
+      if (webdavRemoteRoot) webdavRemoteRoot.value = value.remoteRoot || 'YujiSync';
+      if (webdavDeviceName) webdavDeviceName.value = value.deviceDisplayName || '';
+      if (webdavAllowHttp) webdavAllowHttp.checked = !!value.allowInsecurePrivateHttp;
+       if (value.identityError) setWebdavStatus(value.identityError, true);
+       else if (value.recoveryError) setWebdavStatus(value.recoveryError, true);
+       else if (value.warning) setWebdavStatus(value.warning, true);
+       else if (value.cacheWarnings && value.cacheWarnings.length) setWebdavStatus(formatWebdavCleanupFailures('本机缓存列表不完整，以下路径暂时无法读取：', value.cacheWarnings), true);
+       else if (value.lastCheck && value.lastCheck.checkedAt) setWebdavStatus(value.lastCheck.ok ? (value.lastCheck.message || '最近检查通过：' + value.lastCheck.checkedAt) : (value.lastCheck.message || value.lastCheck.error), !value.lastCheck.ok);
+      else setWebdavStatus(value.enabled ? 'WebDAV 已启用' : 'WebDAV 未启用', false);
+      renderWebdavCache();
+      renderWebdavTask(value.task || webdavState.task);
+      updateTopSourceActions();
+    }
+
+    async function loadWebdavSettings() {
+      const response = await fetch(WEBDAV_API_ROOT + '/settings', { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+      applyWebdavSettings(payload);
+      return payload;
+    }
+
+    function collectWebdavForm() {
+      return {
+        enabled: true,
+        baseUrl: webdavBaseUrl ? webdavBaseUrl.value.trim() : '',
+        username: webdavUsername ? webdavUsername.value.trim() : '',
+        password: webdavPassword ? webdavPassword.value : '',
+        remoteRoot: webdavRemoteRoot ? webdavRemoteRoot.value.trim() : '',
+        deviceDisplayName: webdavDeviceName ? webdavDeviceName.value.trim() : '',
+        allowInsecurePrivateHttp: !!(webdavAllowHttp && webdavAllowHttp.checked)
+      };
+    }
+
+    async function webdavMutation(path, body, method) {
+      const response = await mutationFetch(WEBDAV_API_ROOT + path, {
+        method: method || 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {})
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        const error = new Error(payload.error || payload.message || payload.warning || ('HTTP ' + response.status));
+        error.payload = payload;
+        throw error;
+      }
+      return payload;
+    }
+
+    async function openWebdavSettings() {
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
+      if (webdavUnregisterClearCache) webdavUnregisterClearCache.checked = false;
+      try {
+        await loadWebdavSettings();
+        if (webdavModal) webdavModal.hidden = false;
+        if (webdavBaseUrl) requestAnimationFrame(() => webdavBaseUrl.focus());
+      } catch (error) {
+        showToast('云设置加载失败：' + (error.message || '未知错误'), { tone: 'error', duration: 3200 });
+      }
+    }
+
+    function closeWebdavSettings() {
+      if (webdavModal) webdavModal.hidden = true;
+      if (webdavPassword) webdavPassword.value = '';
+      if (webdavUnregisterClearCache) webdavUnregisterClearCache.checked = false;
+      setWebdavStatus('', false);
+    }
+
+    async function refreshCloudSources(force) {
+      const now = Date.now();
+      if (!force && now - webdavState.lastCatalogCheckAt < 60000) return;
+      webdavState.lastCatalogCheckAt = now;
+      try {
+        const response = await fetch(SOURCES_API_URL + '?refreshWebdav=1', { cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok || !Array.isArray(payload.sources)) throw new Error(payload.error || ('HTTP ' + response.status));
+        sourceState = payload;
+        if (!payload.sources.some(source => source.id === getCurrentSourceId())) currentSourceId = payload.selectedSourceId || 'local-codex';
+        renderSourceSelect();
+      } catch (error) {
+        console.warn('云端来源检查失败', error);
+      }
+    }
+
+    async function checkCurrentSourceStatus(force) {
+      webdavState.lastStatusCheckAt = Date.now();
+      const action = currentSyncAction();
+      if (action === 'none') {
+        webdavState.sourceStatus = null;
+        updateTopSourceActions();
+        return null;
+      }
+      try {
+        const url = SOURCE_STATUS_API_URL + '?sourceId=' + encodeURIComponent(getCurrentSourceId()) + (force ? '&force=1' : '');
+        const response = await fetch(url, { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+        webdavState.sourceStatus = payload;
+        updateTopSourceActions();
+        return payload;
+      } catch (error) {
+        webdavState.sourceStatus = { refresh: { state: 'error', reason: error.message || '' }, sync: { action, state: 'error', reason: error.message || '' } };
+        updateTopSourceActions();
+        return null;
+      }
+    }
+
+    async function pollWebdavTask() {
+      if (webdavState.pollTimer) {
+        clearTimeout(webdavState.pollTimer);
+        webdavState.pollTimer = 0;
+      }
+      try {
+        const response = await fetch(WEBDAV_API_ROOT + '/task', { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || ('HTTP ' + response.status));
+        const task = payload.task || { status: 'idle' };
+        const signature = [task.taskId, task.status, task.updatedAt].join(':');
+        const changed = signature && signature !== webdavState.lastTaskSignature;
+        webdavState.lastTaskSignature = signature;
+        renderWebdavTask(task);
+        if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+          if (Date.now() - webdavState.lastStatusCheckAt >= 60000) {
+            await refreshCloudSources(false);
+            await checkCurrentSourceStatus(false);
+          }
+        }
+        if (changed && task.status === 'needs-confirmation' && task.confirmationToken) {
+          if (confirm(task.errorSummary || '本次上传包含大量删除，确定继续吗？')) {
+            await startCurrentSync(task.confirmationToken);
+          }
+        } else if (changed && task.status === 'completed') {
+          await handleCompletedWebdavTask(task);
+        } else if (changed && task.status === 'error') {
+          showToast('云任务失败：' + formatWebdavTaskError(task), { tone: 'error', duration: 4200 });
+        }
+      } catch (error) {
+        console.warn('云任务状态读取失败', error);
+      } finally {
+        const active = webdavState.task && ['running', 'cancelling'].includes(webdavState.task.status);
+        webdavState.pollTimer = setTimeout(() => { void pollWebdavTask(); }, active ? 1200 : 12000);
+      }
+    }
+
+    async function handleCompletedWebdavTask(task) {
+      await loadWebdavSettings().catch(() => null);
+      await refreshCloudSources(true);
+      if (task.action === 'download' && task.sourceId === getCurrentSourceId()) {
+        await reloadCurrentSourceAfterDownload();
+      }
+      await checkCurrentSourceStatus(true);
+      showToast(task.action === 'download' ? '云端来源已下载' : '本机来源已上传', { duration: 2600 });
+    }
+
+    async function reloadCurrentSourceAfterDownload() {
+      if (webdavState.reloadingDownload) return;
+      webdavState.reloadingDownload = true;
+      const previousSession = getSelectedSession();
+      const previousKey = previousSession ? getSessionKey(previousSession) : '';
+      const anchor = typeof captureProgressAnchor === 'function' ? captureProgressAnchor(previousSession) : null;
+      if (anchor && typeof saveProgressAnchor === 'function') saveProgressAnchor(anchor);
+      const restoreToken = ++progressRestoreToken;
+      try {
+        CURRENT_DETAIL = null;
+        sessionCache.clear();
+        await loadIndex();
+        let restoredWorkspace = null;
+        let restoredSession = null;
+        for (const workspace of APP.workspaces || []) {
+          const match = (workspace.sessions || []).find(session => getSessionKey(session) === previousKey);
+          if (match) {
+            restoredWorkspace = workspace;
+            restoredSession = match;
+            break;
+          }
+        }
+        if (previousKey && !restoredSession) {
+          selectedWorkspaceId = null;
+          selectedSessionKey = null;
+        } else if (restoredSession) {
+          selectedWorkspaceId = restoredWorkspace.id;
+          selectedSessionKey = getSessionKey(restoredSession);
+        }
+        await loadNotes();
+        updateStats();
+        refreshFilterMenus();
+        renderWorkspaceList(true);
+        if (restoredSession) {
+          const detail = await loadSessionDetail(restoredSession);
+          applyLoadedDetail(restoredSession, detail);
+        } else {
+          clearCurrentDetail();
+        }
+        renderViewer();
+        if (anchor && restoredSession) restoreProgressAnchor(anchor, { token: restoreToken, behavior: 'auto' });
+        if (previousKey && !restoredSession) transcript.innerHTML = '<div class="empty-state">当前会话已不存在。</div>';
+      } finally {
+        webdavState.reloadingDownload = false;
+      }
+    }
+
+    async function startCurrentSync(confirmationToken) {
+      const action = currentSyncAction();
+      if (action === 'none') return;
+      try {
+        const payload = await webdavMutation('/' + action, { sourceId: getCurrentSourceId(), confirmationToken: confirmationToken || '' });
+        renderWebdavTask(payload.task);
+        await pollWebdavTask();
+      } catch (error) {
+        showToast((action === 'upload' ? '上传' : '下载') + '启动失败：' + (error.message || '未知错误'), { tone: 'error', duration: 3600 });
+      }
     }
 
     function buildSourceUrl(url) {
@@ -1474,7 +2281,11 @@
         return '<option value="' + escapeHtml(id) + '">' + escapeHtml(label) + '</option>';
       }).join('');
       sourceSelect.value = getCurrentSourceId();
+      const selectedSource = sources.find(source => source && String(source.id || '') === sourceSelect.value);
+      const label = String((selectedSource && selectedSource.label) || sourceSelect.value || '');
+      sourceSelect.title = label;
       sourceSelect.disabled = sources.length <= 1;
+      updateTopSourceActions();
     }
 
     async function loadSources() {
@@ -1499,7 +2310,7 @@
     async function saveSelectedSource(sourceId) {
       if (typeof location !== 'undefined' && location.protocol === 'file:') return;
       try {
-        await fetch(SOURCES_API_URL, {
+        await mutationFetch(SOURCES_API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ selectedSourceId: sourceId })
@@ -1515,12 +2326,14 @@
       selectedQuestionKey = null;
       selectedQuestionKeyIsTemporary = false;
       pendingQuestionFocus = 'last';
+      pendingAnswerFocusQuestionKey = null;
       progressRestoreToken++;
       CURRENT_DETAIL = null;
       sessionCache.clear();
       notesState.notes = new Map();
       notesState.loaded = false;
       viewerSearchQuery = '';
+      viewerSearchQuestionsOnly = false;
       viewerSearchScope = 'all';
       if (viewerSearchInput) viewerSearchInput.value = '';
       if (globalSearchState.timer) {
@@ -1528,6 +2341,7 @@
       }
       globalSearchState = {
         query: '',
+        field: 'all',
         pending: false,
         matchKeys: null,
         requestId: globalSearchState.requestId + 1,
@@ -1564,6 +2378,7 @@
     async function switchSource(sourceId) {
       const nextSourceId = String(sourceId || 'local-codex');
       if (!nextSourceId || nextSourceId === getCurrentSourceId()) return;
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
       currentSourceId = nextSourceId;
       if (sourceSelect) sourceSelect.value = nextSourceId;
       await saveSelectedSource(nextSourceId);
@@ -1581,6 +2396,9 @@
         console.warn('来源切换后加载会话详情失败', error);
       }
       renderViewer();
+      webdavState.sourceStatus = null;
+      updateTopSourceActions();
+      void checkCurrentSourceStatus(true);
     }
 
     async function loadSessionDetail(session) {
@@ -1606,6 +2424,7 @@
       CURRENT_DETAIL = null;
       selectedQuestionKey = null;
       selectedQuestionKeyIsTemporary = false;
+      pendingAnswerFocusQuestionKey = null;
       transcript.innerHTML = '';
     }
 
@@ -1618,9 +2437,277 @@
       });
     }
 
+    function normalizeSearchHistoryQuery(value) {
+      return String(value == null ? '' : value).trim().replace(/\s+/g, ' ');
+    }
+
+    function getSearchHistoryDedupKey(value) {
+      return normalizeSearchHistoryQuery(value).replace(/[A-Z]/g, character => character.toLowerCase());
+    }
+
+    function sanitizeSearchHistoryItems(items) {
+      const output = [];
+      const seen = new Set();
+      (Array.isArray(items) ? items : []).some(item => {
+        if (typeof item !== 'string') return false;
+        const normalized = normalizeSearchHistoryQuery(item);
+        const key = getSearchHistoryDedupKey(normalized);
+        if (!normalized || seen.has(key)) return false;
+        seen.add(key);
+        output.push(normalized);
+        return output.length >= SEARCH_HISTORY_LIMIT;
+      });
+      return output;
+    }
+
+    function isSearchHistoryQuotaError(error) {
+      if (!error) return false;
+      return error.name === 'QuotaExceededError' ||
+        error.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+        error.code === 22 || error.code === 1014;
+    }
+
+    function updateSearchHistoryButtonState() {
+      if (!viewerSearchHistoryButton) return;
+      const open = !!(viewerSearchHistoryMenu && !viewerSearchHistoryMenu.hidden);
+      viewerSearchHistoryButton.disabled = !searchHistoryItems.length;
+      viewerSearchHistoryButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (viewerSearchInput) viewerSearchInput.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function persistSearchHistoryItems(options) {
+      const settings = options || {};
+      if (!searchHistoryStorageWritable || typeof window === 'undefined') {
+        updateSearchHistoryButtonState();
+        return false;
+      }
+      const original = searchHistoryItems.slice(0, SEARCH_HISTORY_LIMIT);
+      const candidates = original.slice();
+      while (true) {
+        try {
+          if (candidates.length) {
+            window.localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify({ version: 1, items: candidates }));
+          } else {
+            window.localStorage.removeItem(SEARCH_HISTORY_STORAGE_KEY);
+          }
+          searchHistoryItems = candidates;
+          updateSearchHistoryButtonState();
+          return true;
+        } catch (error) {
+          if (isSearchHistoryQuotaError(error) && candidates.length > 1) {
+            candidates.pop();
+            continue;
+          }
+          if (!isSearchHistoryQuotaError(error)) searchHistoryStorageWritable = false;
+          searchHistoryItems = original;
+          updateSearchHistoryButtonState();
+          if (settings.notifyFailure) showToast('搜索历史无法保存，当前搜索不受影响', { tone: 'error', duration: 2400 });
+          return false;
+        }
+      }
+    }
+
+    function loadSearchHistory() {
+      searchHistoryItems = [];
+      if (typeof window === 'undefined') {
+        updateSearchHistoryButtonState();
+        return;
+      }
+      let raw = null;
+      let parsed = null;
+      try {
+        raw = window.localStorage.getItem(SEARCH_HISTORY_STORAGE_KEY);
+      } catch (error) {
+        searchHistoryStorageWritable = false;
+        updateSearchHistoryButtonState();
+        return;
+      }
+      if (raw) {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (error) {
+          parsed = null;
+        }
+      }
+      const supported = parsed && parsed.version === 1 && Array.isArray(parsed.items);
+      searchHistoryItems = sanitizeSearchHistoryItems(supported ? parsed.items : []);
+      updateSearchHistoryButtonState();
+      if (!raw) return;
+      const normalizedPayload = JSON.stringify({ version: 1, items: searchHistoryItems });
+      if (!supported || raw !== normalizedPayload) persistSearchHistoryItems();
+    }
+
+    function getFilteredSearchHistoryItems() {
+      const filter = getSearchHistoryDedupKey(viewerSearchInput ? viewerSearchInput.value : viewerSearchQuery);
+      if (!filter) return searchHistoryItems.slice();
+      return searchHistoryItems.filter(item => getSearchHistoryDedupKey(item).includes(filter));
+    }
+
+    function resetSearchHistoryClearConfirmation() {
+      if (searchHistoryClearTimer) {
+        clearTimeout(searchHistoryClearTimer);
+        searchHistoryClearTimer = 0;
+      }
+      if (viewerSearchHistoryClear) viewerSearchHistoryClear.textContent = '清空历史';
+    }
+
+    function closeSearchHistoryMenu() {
+      resetSearchHistoryClearConfirmation();
+      searchHistoryHighlightIndex = -1;
+      if (viewerSearchHistoryMenu) viewerSearchHistoryMenu.hidden = true;
+      if (viewerSearchInput) viewerSearchInput.removeAttribute('aria-activedescendant');
+      updateSearchHistoryButtonState();
+    }
+
+    function setSearchHistoryHighlight(index, options) {
+      if (!viewerSearchHistoryMenu || viewerSearchHistoryMenu.hidden) return;
+      const rows = Array.from(viewerSearchHistoryList.querySelectorAll('.search-history-item'));
+      if (!rows.length) {
+        searchHistoryHighlightIndex = -1;
+        return;
+      }
+      searchHistoryHighlightIndex = Math.max(0, Math.min(rows.length - 1, index));
+      rows.forEach((row, rowIndex) => {
+        const active = rowIndex === searchHistoryHighlightIndex;
+        row.classList.toggle('is-active', active);
+        row.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      const activeRow = rows[searchHistoryHighlightIndex];
+      if (viewerSearchInput && activeRow) viewerSearchInput.setAttribute('aria-activedescendant', activeRow.id);
+      if (activeRow && (!options || options.scroll !== false)) activeRow.scrollIntoView({ block: 'nearest' });
+    }
+
+    function renderSearchHistoryMenu() {
+      if (!viewerSearchHistoryList || !viewerSearchHistoryMenu) return false;
+      const items = getFilteredSearchHistoryItems();
+      viewerSearchHistoryList.replaceChildren();
+      if (!items.length) {
+        closeSearchHistoryMenu();
+        return false;
+      }
+      const fragment = document.createDocumentFragment();
+      items.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.id = 'viewerSearchHistoryOption-' + index;
+        row.className = 'search-history-item';
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', 'false');
+        row._searchHistoryValue = item;
+
+        const valueButton = document.createElement('button');
+        valueButton.type = 'button';
+        valueButton.className = 'search-history-value';
+        valueButton.title = item;
+        valueButton.textContent = item;
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'search-history-delete';
+        deleteButton.title = '删除这条搜索历史';
+        deleteButton.setAttribute('aria-label', '删除搜索历史：' + item);
+        deleteButton.textContent = '删除';
+
+        row.append(valueButton, deleteButton);
+        fragment.appendChild(row);
+      });
+      viewerSearchHistoryList.appendChild(fragment);
+      searchHistoryHighlightIndex = Math.max(-1, Math.min(searchHistoryHighlightIndex, items.length - 1));
+      if (searchHistoryHighlightIndex >= 0) setSearchHistoryHighlight(searchHistoryHighlightIndex, { scroll: false });
+      return true;
+    }
+
+    function openSearchHistoryMenu(options) {
+      if (!viewerSearchHistoryMenu || !searchHistoryItems.length) return false;
+      viewerSearchHistoryMenu.hidden = false;
+      if (!renderSearchHistoryMenu()) return false;
+      updateSearchHistoryButtonState();
+      const settings = options || {};
+      if (Number.isInteger(settings.highlightIndex)) setSearchHistoryHighlight(settings.highlightIndex);
+      return true;
+    }
+
+    function confirmSearchHistoryQuery(value) {
+      const normalized = normalizeSearchHistoryQuery(value === undefined
+        ? (viewerSearchInput ? viewerSearchInput.value : viewerSearchQuery)
+        : value);
+      if (!normalized) return '';
+      const key = getSearchHistoryDedupKey(normalized);
+      searchHistoryItems = [normalized].concat(searchHistoryItems.filter(item => getSearchHistoryDedupKey(item) !== key)).slice(0, SEARCH_HISTORY_LIMIT);
+      persistSearchHistoryItems({ notifyFailure: true });
+      if (viewerSearchHistoryMenu && !viewerSearchHistoryMenu.hidden) renderSearchHistoryMenu();
+      return normalized;
+    }
+
+    function useSearchHistoryItem(value) {
+      const normalized = normalizeSearchHistoryQuery(value);
+      if (!normalized) return;
+      if (viewerSearchInput) viewerSearchInput.value = normalized;
+      viewerSearchQuery = normalized;
+      confirmSearchHistoryQuery(normalized);
+      if (viewerSearchInput) viewerSearchInput.focus({ preventScroll: true });
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
+      scheduleViewerSearch({ immediate: true });
+    }
+
+    function moveSearchHistoryHighlight(direction) {
+      const items = getFilteredSearchHistoryItems();
+      if (!items.length) return false;
+      if (!viewerSearchHistoryMenu || viewerSearchHistoryMenu.hidden) {
+        const initial = direction < 0 ? items.length - 1 : 0;
+        return openSearchHistoryMenu({ highlightIndex: initial });
+      }
+      const next = searchHistoryHighlightIndex < 0
+        ? (direction < 0 ? items.length - 1 : 0)
+        : (searchHistoryHighlightIndex + direction + items.length) % items.length;
+      setSearchHistoryHighlight(next);
+      return true;
+    }
+
+    function deleteSearchHistoryItem(value) {
+      const key = getSearchHistoryDedupKey(value);
+      const previousHighlight = searchHistoryHighlightIndex;
+      searchHistoryItems = searchHistoryItems.filter(item => getSearchHistoryDedupKey(item) !== key);
+      persistSearchHistoryItems({ notifyFailure: true });
+      if (!searchHistoryItems.length) {
+        closeSearchHistoryMenu();
+        return;
+      }
+      if (!renderSearchHistoryMenu()) return;
+      const remaining = getFilteredSearchHistoryItems();
+      if (remaining.length) setSearchHistoryHighlight(Math.min(Math.max(previousHighlight, 0), remaining.length - 1));
+    }
+
+    function clearSearchHistory() {
+      if (!searchHistoryClearTimer) {
+        if (viewerSearchHistoryClear) viewerSearchHistoryClear.textContent = '再次点击确认清空';
+        searchHistoryClearTimer = setTimeout(resetSearchHistoryClearConfirmation, SEARCH_HISTORY_CLEAR_CONFIRM_MS);
+        return;
+      }
+      resetSearchHistoryClearConfirmation();
+      const previousItems = searchHistoryItems.slice();
+      searchHistoryItems = [];
+      if (!persistSearchHistoryItems({ notifyFailure: true })) {
+        searchHistoryItems = previousItems;
+        updateSearchHistoryButtonState();
+        if (viewerSearchHistoryMenu && !viewerSearchHistoryMenu.hidden) renderSearchHistoryMenu();
+        return false;
+      }
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
+      showToast('搜索历史已清空', { duration: 1800 });
+      return true;
+    }
+
     function getGlobalSearchQuery() {
       if (viewerSearchScope === 'current') return '';
       return (viewerSearchQuery || '').trim();
+    }
+
+    function getGlobalSearchField() {
+      return viewerSearchQuestionsOnly ? 'questions' : 'all';
+    }
+
+    function hasLibrarySearchQuery() {
+      return viewerSearchScope === 'all' && !!String(viewerSearchQuery || '').trim();
     }
 
     function getGlobalSearchHitSet() {
@@ -1635,6 +2722,9 @@
     }
 
     function getGlobalSearchEmptyText() {
+      if (viewerSearchQuestionsOnly && getSearchTerms(viewerSearchQuery).length) {
+        return '没有匹配这些关键词的提问。';
+      }
       if (!getGlobalSearchQuery()) return '';
       if (globalSearchState.pending) return '正在搜索所有会话...';
       if (globalSearchState.error) return '搜索失败：' + globalSearchState.error;
@@ -1642,16 +2732,19 @@
     }
 
     function getEmptySourceText() {
-      if (APP && APP.needsBuild) return '当前来源尚未扫描，请点击刷新。';
       const source = getCurrentSource();
+      if (isWebdavSource(source) && !source.downloaded) return '此云端来源尚未下载。';
+      if (APP && APP.needsBuild) return '当前来源尚未扫描，请点击刷新。';
       if (source && source.type === 'external-codex-jsonl' && APP && !APP.totalSessions) {
         return '当前外部来源还没有可显示的会话，请点击刷新扫描这个来源。';
       }
       return '';
     }
 
-    function scheduleGlobalSearch() {
+    function scheduleGlobalSearch(options) {
+      const settings = options || {};
       const query = getGlobalSearchQuery();
+      const field = getGlobalSearchField();
       if (globalSearchState.timer) {
         clearTimeout(globalSearchState.timer);
         globalSearchState.timer = 0;
@@ -1659,6 +2752,7 @@
 
       if (!query) {
         globalSearchState.query = '';
+        globalSearchState.field = field;
         globalSearchState.pending = false;
         globalSearchState.matchKeys = null;
         globalSearchState.error = '';
@@ -1668,13 +2762,18 @@
       }
 
       globalSearchState.pending = true;
+      globalSearchState.field = field;
       globalSearchState.error = '';
       globalSearchState.matchKeys = new Set();
       renderWorkspaceList(true);
       renderViewer();
-      globalSearchState.timer = setTimeout(() => {
-        void runGlobalSearch(query);
-      }, 240);
+      if (settings.immediate) {
+        void runGlobalSearch(query, field);
+      } else {
+        globalSearchState.timer = setTimeout(() => {
+          void runGlobalSearch(query, field);
+        }, 240);
+      }
     }
 
     function resetGlobalSearchStateForCurrentScope() {
@@ -1687,34 +2786,41 @@
         globalSearchState.timer = 0;
       }
       globalSearchState.query = '';
+      globalSearchState.field = getGlobalSearchField();
       globalSearchState.pending = false;
       globalSearchState.matchKeys = null;
       globalSearchState.error = '';
       globalSearchState.requestId++;
     }
 
-    function scheduleViewerSearch() {
+    function scheduleViewerSearch(options) {
+      const settings = options || {};
       if (viewerSearchScope === 'current') {
         if (currentScopeSearchTimer) {
           clearTimeout(currentScopeSearchTimer);
           currentScopeSearchTimer = 0;
         }
         resetGlobalSearchStateForCurrentScope();
-        currentScopeSearchTimer = setTimeout(() => {
-          currentScopeSearchTimer = 0;
+        if (settings.immediate) {
           renderViewer();
-        }, CURRENT_SCOPE_SEARCH_DELAY_MS);
+        } else {
+          currentScopeSearchTimer = setTimeout(() => {
+            currentScopeSearchTimer = 0;
+            renderViewer();
+          }, CURRENT_SCOPE_SEARCH_DELAY_MS);
+        }
         return;
       }
       if (currentScopeSearchTimer) {
         clearTimeout(currentScopeSearchTimer);
         currentScopeSearchTimer = 0;
       }
-      scheduleGlobalSearch();
+      scheduleGlobalSearch(settings);
     }
 
-    async function runGlobalSearch(query) {
+    async function runGlobalSearch(query, field) {
       const normalizedQuery = String(query || '').trim();
+      const normalizedField = field === 'questions' ? 'questions' : 'all';
       const requestId = ++globalSearchState.requestId;
       if (!normalizedQuery) {
         scheduleGlobalSearch();
@@ -1722,13 +2828,15 @@
       }
 
       try {
-        const response = await fetch(SEARCH_API_URL + '?sourceId=' + encodeURIComponent(getCurrentSourceId()) + '&q=' + encodeURIComponent(normalizedQuery), { cache: 'no-store' });
+        const response = await fetch(SEARCH_API_URL + '?sourceId=' + encodeURIComponent(getCurrentSourceId()) + '&field=' + encodeURIComponent(normalizedField) + '&q=' + encodeURIComponent(normalizedQuery), { cache: 'no-store' });
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const payload = await response.json();
         if (requestId !== globalSearchState.requestId) return;
         if ((getGlobalSearchQuery() || '') !== normalizedQuery) return;
+        if (getGlobalSearchField() !== normalizedField) return;
         const keys = Array.isArray(payload.sessionKeys) ? payload.sessionKeys : [];
         globalSearchState.query = normalizedQuery;
+        globalSearchState.field = normalizedField;
         globalSearchState.pending = false;
         globalSearchState.error = '';
         globalSearchState.matchKeys = new Set(keys.map(item => String(item || '')));
@@ -2223,6 +3331,10 @@
 
     function openNoteMenu(event, target) {
       if (!noteContextMenu || !target) return;
+      if (!getSourceCapability('canEditNotes')) {
+        showToast('云端备注只能在来源设备编辑。', { duration: 2200 });
+        return;
+      }
       closeNoteMenu();
       hideNoteTooltip();
       activeNoteTarget = target;
@@ -2248,6 +3360,8 @@
 
     function openNoteModal(target) {
       if (!noteModal || !noteInput || !target) return;
+      if (!getSourceCapability('canEditNotes')) return;
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
       activeNoteTarget = target;
       const existing = getNote(target.key);
       noteModalTitle.textContent = existing ? '编辑备注' : '新建备注';
@@ -2270,7 +3384,7 @@
         return;
       }
       try {
-        const response = await fetch(NOTES_API_URL, {
+        const response = await mutationFetch(NOTES_API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(Object.assign({}, activeNoteTarget, { sourceId: getCurrentSourceId(), note }))
@@ -2281,6 +3395,7 @@
         notesState.available = true;
         closeNoteModal();
         renderSessionList(true);
+        await checkCurrentSourceStatus(true);
         showToast('备注已保存');
       } catch (error) {
         if (noteError) noteError.textContent = '保存失败：' + (error.message || '未知错误');
@@ -2292,7 +3407,7 @@
       if (!target) return;
       if (!confirm('确定删除这条备注吗？')) return;
       try {
-        const response = await fetch(NOTES_API_URL, {
+        const response = await mutationFetch(NOTES_API_URL, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ key: target.key, sourceId: getCurrentSourceId() })
@@ -2302,6 +3417,7 @@
         notesState.notes.delete(target.key);
         closeNoteMenu();
         renderSessionList(true);
+        await checkCurrentSourceStatus(true);
         showToast('备注已删除');
       } catch (error) {
         showToast('删除备注失败：' + (error.message || '未知错误'), { tone: 'error', duration: 3200 });
@@ -2497,10 +3613,12 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(bodyWithSourceId(settings.body))
         };
-        const response = await fetch(settings.endpoint, request);
+        const requestFetch = typeof mutationFetch === 'function' ? mutationFetch : fetch;
+        const response = await requestFetch(settings.endpoint, request);
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const payload = await response.json();
         if (!payload.ok) throw new Error(payload.error || 'refresh failed');
+        if (typeof clearFailedMessageImageCache === 'function') clearFailedMessageImageCache();
 
         APP = payload.data;
         if (!APP || typeof APP !== 'object') APP = { workspaces: [] };
@@ -2511,7 +3629,7 @@
         if (typeof renderSourceSelect === 'function') renderSourceSelect();
         prepareData();
         if (typeof getGlobalSearchQuery === 'function' && typeof runGlobalSearch === 'function' && getGlobalSearchQuery()) {
-          await runGlobalSearch(getGlobalSearchQuery());
+          await runGlobalSearch(getGlobalSearchQuery(), getGlobalSearchField());
         }
         updateStats();
         refreshFilterMenus();
@@ -2561,10 +3679,12 @@
       } finally {
         setRefreshButtonLoading(button, false, settings.loadingText, settings.idleText);
         runRefreshRequest._running = false;
+        if (typeof checkCurrentSourceStatus === 'function') void checkCurrentSourceStatus(true);
       }
     }
 
     async function refreshIndex() {
+      if (typeof getSourceCapability === 'function' && !getSourceCapability('canRefresh')) return;
       return runRefreshRequest('incremental', {
         endpoint: '/api/refresh',
         buttonId: 'refreshButton',
@@ -2575,6 +3695,7 @@
     }
 
     async function refreshCurrentSession() {
+      if (typeof getSourceCapability === 'function' && !getSourceCapability('canQuickRefresh')) return;
       const session = getSelectedSession();
       if (!session || !session.path) {
         showToast('当前没有可快刷的会话。', { tone: 'error', duration: 2200 });
@@ -2590,6 +3711,7 @@
     }
 
     async function rebuildIndex() {
+      if (typeof getSourceCapability === 'function' && !getSourceCapability('canRebuild')) return;
       return runRefreshRequest('rebuild', {
         endpoint: '/api/rebuild',
         buttonId: 'rebuildButton',
@@ -2714,7 +3836,7 @@
 
       const workspaceVisible = visible.find(item => item.workspace.id === selectedWorkspaceId);
       if (!workspaceVisible) {
-        if (getGlobalSearchQuery()) {
+        if (hasLibrarySearchQuery()) {
           return;
         }
         selectedWorkspaceId = visible[0].workspace.id;
@@ -2727,7 +3849,7 @@
 
       const sessionVisible = currentWorkspace.sessions.find(item => getSessionKey(item) === selectedSessionKey);
       if (!sessionVisible) {
-        if (getGlobalSearchQuery()) {
+        if (hasLibrarySearchQuery()) {
           return;
         }
         selectedSessionKey = currentWorkspace.sessions[0].key;
@@ -2896,7 +4018,7 @@
     }
 
     function restoreProgressAnchor(anchor, options) {
-      const settings = Object.assign({ behavior: 'auto' }, options || {});
+      const settings = Object.assign({ behavior: 'auto', focusOnComplete: true }, options || {});
       if (settings.token && settings.token !== progressRestoreToken) return false;
       if (!anchorMatchesCurrentSession(anchor, getSelectedSession())) return false;
       const resolvedKey = resolveQuestionKeyFromAnchor(anchor, getSelectedSession());
@@ -2920,7 +4042,7 @@
           settled = true;
         }
         if (settled || attempts >= maxAttempts || typeof requestAnimationFrame !== 'function') {
-          focusTranscriptForQuestionNavigation();
+          if (settings.focusOnComplete !== false) focusTranscriptForQuestionNavigation();
           return;
         }
         requestAnimationFrame(scroll);
@@ -2930,11 +4052,16 @@
       return true;
     }
 
-    function restoreCurrentProgressAnchorIfReadable() {
+    function restoreCurrentProgressAnchorIfReadable(options) {
       if (viewerSearchQuery.trim()) return false;
       const anchor = getProgressAnchorForSession(getSelectedSession());
       if (!anchor) return false;
-      return restoreProgressAnchor(anchor, { token: progressRestoreToken, behavior: 'auto' });
+      const settings = Object.assign({ focusOnComplete: true }, options || {});
+      return restoreProgressAnchor(anchor, {
+        token: progressRestoreToken,
+        behavior: 'auto',
+        focusOnComplete: settings.focusOnComplete
+      });
     }
 
     function getCurrentDetailEventsWithKeys() {
@@ -3001,6 +4128,14 @@
       return terms.every(term => haystack.includes(term));
     }
 
+    function questionMatchesSearch(event, query) {
+      if (!event || event.kind !== 'user') return false;
+      const terms = getSearchTerms(query);
+      if (!terms.length) return true;
+      const haystack = String(event.rawText || event.summary || '').toLowerCase();
+      return terms.every(term => haystack.includes(term));
+    }
+
     function highlightMatchesInElement(root, terms) {
       const activeTerms = Array.from(new Set((terms || []).filter(Boolean)));
       if (!root || !activeTerms.length || typeof document === 'undefined' || typeof NodeFilter === 'undefined') return;
@@ -3009,7 +4144,7 @@
       while (walker.nextNode()) {
         const node = walker.currentNode;
         if (!node || !node.nodeValue) continue;
-        if (node.parentElement && node.parentElement.closest('mark,script,style')) continue;
+        if (node.parentElement && node.parentElement.closest('mark,script,style,.is-search-companion')) continue;
         textNodes.push(node);
       }
 
@@ -3062,35 +4197,107 @@
       const query = viewerSearchQuery.trim().toLowerCase();
       const events = getCurrentDetailEventsWithKeys();
       if (!query) return events.filter(event => eventMatchesView(event));
+      if (viewerSearchQuestionsOnly) {
+        if (viewerViewMode === 'questions') {
+          return events
+            .filter(event => eventMatchesView(event) && questionMatchesSearch(event, query))
+            .map(event => Object.assign({}, event, { isDirectSearchHit: true, isSearchCompanion: false }));
+        }
+
+        const output = [];
+        let group = [];
+        const appendQuestionGroup = items => {
+          if (!items.length) return;
+          const question = items[0] && items[0].kind === 'user' ? items[0] : null;
+          if (!question || !questionMatchesSearch(question, query)) return;
+          output.push(Object.assign({}, question, {
+            isDirectSearchHit: true,
+            isSearchCompanion: false
+          }));
+          items.forEach(event => {
+            if (!event || event.kind !== 'assistant_final') return;
+            output.push(Object.assign({}, event, {
+              isDirectSearchHit: false,
+              isSearchCompanion: true
+            }));
+          });
+        };
+        events.forEach(event => {
+          if (!event) return;
+          if (event.kind === 'user' && group.length) {
+            appendQuestionGroup(group);
+            group = [];
+          }
+          group.push(event);
+        });
+        appendQuestionGroup(group);
+        return output;
+      }
       if (viewerViewMode === 'questions') {
-        return events.filter(event => eventMatchesView(event) && eventMatchesSearch(event, query));
+        return events
+          .filter(event => eventMatchesView(event) && eventMatchesSearch(event, query))
+          .map(event => Object.assign({}, event, { isDirectSearchHit: true, isSearchCompanion: false }));
       }
 
       const output = [];
-      const includedQuestions = new Set();
-      let previousQuestion = null;
-      events.forEach(event => {
-        if (!event) return;
-        if (event.kind === 'user') {
-          previousQuestion = event;
-        }
-        if (!eventMatchesView(event) || !eventMatchesSearch(event, query)) return;
+      let group = [];
 
-        if (event.kind === 'user') {
-          output.push(event);
-          if (event.questionKey) includedQuestions.add(event.questionKey);
+      function appendSearchGroup(items) {
+        if (!items.length) return;
+        const question = items[0] && items[0].kind === 'user' ? items[0] : null;
+        if (!question) {
+          items.forEach(event => {
+            if (event && eventMatchesView(event) && eventMatchesSearch(event, query)) {
+              output.push(Object.assign({}, event, { isDirectSearchHit: true, isSearchCompanion: false }));
+            }
+          });
           return;
         }
 
-        if (previousQuestion) {
-          const questionKey = previousQuestion.questionKey || '';
-          if (!questionKey || !includedQuestions.has(questionKey)) {
-            output.push(Object.assign({}, previousQuestion, { isSearchContext: true }));
-            if (questionKey) includedQuestions.add(questionKey);
+        const questionMatched = eventMatchesSearch(question, query);
+        const answerMatched = items.some(event => event && event.kind === 'assistant_final' && eventMatchesSearch(event, query));
+        const includeAnswerPair = questionMatched || answerMatched;
+        const processMatched = items.some(event => {
+          return event && !['user', 'assistant_final'].includes(event.kind) && eventMatchesSearch(event, query);
+        });
+        if (!includeAnswerPair && !processMatched) return;
+
+        items.forEach(event => {
+          if (!event || !eventMatchesView(event)) return;
+          const direct = eventMatchesSearch(event, query);
+          if (event.kind === 'user') {
+            output.push(Object.assign({}, event, {
+              isDirectSearchHit: direct,
+              isSearchCompanion: !direct
+            }));
+            return;
           }
+          if (event.kind === 'assistant_final') {
+            if (!includeAnswerPair) return;
+            output.push(Object.assign({}, event, {
+              isDirectSearchHit: direct,
+              isSearchCompanion: !direct
+            }));
+            return;
+          }
+          if (direct) {
+            output.push(Object.assign({}, event, {
+              isDirectSearchHit: true,
+              isSearchCompanion: false
+            }));
+          }
+        });
+      }
+
+      events.forEach(event => {
+        if (!event) return;
+        if (event.kind === 'user' && group.length) {
+          appendSearchGroup(group);
+          group = [];
         }
-        output.push(event);
+        group.push(event);
       });
+      appendSearchGroup(group);
       return output;
     }
 
@@ -3177,7 +4384,8 @@
         return;
       }
 
-      const current = visible.find(item => item.workspace.id === selectedWorkspaceId);
+      const selectedWorkspace = visible.find(item => item.workspace.id === selectedWorkspaceId);
+      const current = selectedWorkspace || (hasLibrarySearchQuery() ? visible[0] : null);
       if (!current) {
         sessionList.innerHTML = '<div class="empty-state">' + escapeHtml(getGlobalSearchEmptyText() || '当前工作目录在过滤条件下不可见。') + '</div>';
         renderViewer();
@@ -3185,7 +4393,7 @@
       }
 
       if (!current.sessions.length) {
-        sessionList.innerHTML = '<div class="empty-state">这个工作目录下没有匹配的聊天标题。</div>';
+        sessionList.innerHTML = '<div class="empty-state">这个工作目录下没有匹配的会话。</div>';
         selectedSessionKey = null;
         clearCurrentDetail();
         renderViewer();
@@ -3207,6 +4415,7 @@
           '<span class="title-group-meta">' + escapeHtml(formatTitleGroupMeta(group)) + '</span>';
         groupHead.onmousedown = preventTitleButtonMouseFocus;
         groupHead.onclick = async () => {
+          selectedWorkspaceId = current.workspace.id;
           await selectSessionFromTitlePane(group.sessions[0]);
         };
         groupNode.appendChild(groupHead);
@@ -3223,6 +4432,7 @@
             btn.innerHTML = '<span class="session-meta">' + escapeHtml(formatSessionMeta(session)) + '</span>';
             btn.onmousedown = preventTitleButtonMouseFocus;
             btn.onclick = async () => {
+              selectedWorkspaceId = current.workspace.id;
               await selectSessionFromTitlePane(session);
             };
             sessionRows.appendChild(btn);
@@ -3505,7 +4715,8 @@
       }
       try {
         await copyText(session.path);
-        showToast('已复制路径：\n' + session.path, { duration: 2600 });
+        const remoteNotice = typeof isWebdavSource === 'function' && isWebdavSource() ? '\n此路径来自来源设备，当前电脑上可能不存在。' : '';
+        showToast('已复制路径：\n' + session.path + remoteNotice, { duration: 2600 });
       } catch (error) {
         showToast('复制路径失败，请手动复制', { tone: 'error', duration: 2200 });
       }
@@ -3648,34 +4859,339 @@
     }
 
     let imagePreviewTrigger = null;
+    let imagePreviewItems = [];
+    let imagePreviewIndex = -1;
+    const MAX_FAILED_MESSAGE_IMAGE_KEYS = 128;
+    const failedMessageImageKeys = new Map();
+    const IMAGE_PREVIEW_MIN_SCALE = 0.25;
+    const IMAGE_PREVIEW_MAX_SCALE = 5;
+    const IMAGE_PREVIEW_DRAG_THRESHOLD = 4;
+    const IMAGE_PREVIEW_MIN_VISIBLE = 48;
+    const imagePreviewTransform = {
+      scale: 1,
+      translateX: 0,
+      translateY: 0,
+      pointerId: null,
+      dragStartX: 0,
+      dragStartY: 0,
+      dragOriginX: 0,
+      dragOriginY: 0,
+      dragClientX: 0,
+      dragClientY: 0,
+      dragMoved: false,
+      wheelDelta: 0,
+      wheelClientX: 0,
+      wheelClientY: 0,
+      wheelFrame: 0,
+      dragFrame: 0
+    };
 
-    function openImagePreview(src, alt) {
-      if (!src) return;
-      imagePreviewTrigger = document.activeElement;
+    function getImagePreviewBaseSize() {
+      let width = Number(imagePreviewImage && imagePreviewImage.offsetWidth) || 0;
+      let height = Number(imagePreviewImage && imagePreviewImage.offsetHeight) || 0;
+      if ((!width || !height) && imagePreviewImage && imagePreviewImage.getBoundingClientRect) {
+        const rect = imagePreviewImage.getBoundingClientRect();
+        const scale = imagePreviewTransform.scale || 1;
+        if (!width) width = (Number(rect.width) || 0) / scale;
+        if (!height) height = (Number(rect.height) || 0) / scale;
+      }
+      return { width, height };
+    }
+
+    function clampImagePreviewTranslation() {
+      if (imagePreviewTransform.scale <= 1) {
+        imagePreviewTransform.translateX = 0;
+        imagePreviewTransform.translateY = 0;
+        return;
+      }
+      const base = getImagePreviewBaseSize();
+      const stageWidth = Number(imagePreviewStage && imagePreviewStage.clientWidth) || 0;
+      const stageHeight = Number(imagePreviewStage && imagePreviewStage.clientHeight) || 0;
+      if (!base.width || !base.height || !stageWidth || !stageHeight) {
+        imagePreviewTransform.translateX = 0;
+        imagePreviewTransform.translateY = 0;
+        return;
+      }
+      const scaledWidth = base.width * imagePreviewTransform.scale;
+      const scaledHeight = base.height * imagePreviewTransform.scale;
+      const visibleX = Math.min(IMAGE_PREVIEW_MIN_VISIBLE, scaledWidth);
+      const visibleY = Math.min(IMAGE_PREVIEW_MIN_VISIBLE, scaledHeight);
+      const maxX = Math.max(0, (stageWidth + scaledWidth) / 2 - visibleX);
+      const maxY = Math.max(0, (stageHeight + scaledHeight) / 2 - visibleY);
+      imagePreviewTransform.translateX = Math.max(-maxX, Math.min(maxX, imagePreviewTransform.translateX));
+      imagePreviewTransform.translateY = Math.max(-maxY, Math.min(maxY, imagePreviewTransform.translateY));
+    }
+
+    function applyImagePreviewTransform() {
+      if (!imagePreviewImage || !imagePreviewStage) return;
+      imagePreviewImage.style.transform = 'translate3d(' + imagePreviewTransform.translateX + 'px, ' + imagePreviewTransform.translateY + 'px, 0) scale(' + imagePreviewTransform.scale + ')';
+      imagePreviewStage.classList.toggle('is-zoomed', imagePreviewTransform.scale > 1);
+      imagePreviewStage.classList.toggle('is-dragging', imagePreviewTransform.pointerId !== null);
+    }
+
+    function releaseImagePreviewPointer() {
+      const pointerId = imagePreviewTransform.pointerId;
+      if (pointerId !== null && imagePreviewStage && imagePreviewStage.hasPointerCapture && imagePreviewStage.hasPointerCapture(pointerId)) {
+        imagePreviewStage.releasePointerCapture(pointerId);
+      }
+      imagePreviewTransform.pointerId = null;
+    }
+
+    function resetImagePreviewTransform() {
+      if (imagePreviewTransform.wheelFrame) cancelAnimationFrame(imagePreviewTransform.wheelFrame);
+      if (imagePreviewTransform.dragFrame) cancelAnimationFrame(imagePreviewTransform.dragFrame);
+      releaseImagePreviewPointer();
+      Object.assign(imagePreviewTransform, {
+        scale: 1,
+        translateX: 0,
+        translateY: 0,
+        pointerId: null,
+        dragStartX: 0,
+        dragStartY: 0,
+        dragOriginX: 0,
+        dragOriginY: 0,
+        dragClientX: 0,
+        dragClientY: 0,
+        dragMoved: false,
+        wheelDelta: 0,
+        wheelClientX: 0,
+        wheelClientY: 0,
+        wheelFrame: 0,
+        dragFrame: 0
+      });
+      applyImagePreviewTransform();
+    }
+
+    function queueImagePreviewZoom(event) {
+      if (!event || !imagePreviewModal || imagePreviewModal.hidden) return;
+      event.preventDefault();
+      let delta = Number(event.deltaY) || 0;
+      if (event.deltaMode === 1) delta *= 16;
+      else if (event.deltaMode === 2) delta *= Number(imagePreviewStage.clientHeight) || 1;
+      imagePreviewTransform.wheelDelta = Math.max(-240, Math.min(240, imagePreviewTransform.wheelDelta + delta));
+      imagePreviewTransform.wheelClientX = Number(event.clientX) || 0;
+      imagePreviewTransform.wheelClientY = Number(event.clientY) || 0;
+      if (imagePreviewTransform.wheelFrame) return;
+      imagePreviewTransform.wheelFrame = requestAnimationFrame(() => {
+        imagePreviewTransform.wheelFrame = 0;
+        const wheelDelta = imagePreviewTransform.wheelDelta;
+        imagePreviewTransform.wheelDelta = 0;
+        if (!wheelDelta) return;
+        const previousScale = imagePreviewTransform.scale;
+        const nextScale = Math.max(
+          IMAGE_PREVIEW_MIN_SCALE,
+          Math.min(IMAGE_PREVIEW_MAX_SCALE, previousScale * Math.exp(-wheelDelta * 0.002))
+        );
+        if (nextScale === previousScale) return;
+        const stageRect = imagePreviewStage.getBoundingClientRect();
+        const pointerX = imagePreviewTransform.wheelClientX - stageRect.left - stageRect.width / 2;
+        const pointerY = imagePreviewTransform.wheelClientY - stageRect.top - stageRect.height / 2;
+        const ratio = nextScale / previousScale;
+        imagePreviewTransform.translateX = pointerX - (pointerX - imagePreviewTransform.translateX) * ratio;
+        imagePreviewTransform.translateY = pointerY - (pointerY - imagePreviewTransform.translateY) * ratio;
+        imagePreviewTransform.scale = nextScale;
+        clampImagePreviewTranslation();
+        applyImagePreviewTransform();
+      });
+    }
+
+    function handleImagePreviewPointerDown(event) {
+      if (!event || event.isPrimary === false || event.button !== 0 || imagePreviewTransform.scale <= 1) return false;
+      event.preventDefault();
+      imagePreviewTransform.pointerId = event.pointerId;
+      imagePreviewTransform.dragStartX = event.clientX;
+      imagePreviewTransform.dragStartY = event.clientY;
+      imagePreviewTransform.dragOriginX = imagePreviewTransform.translateX;
+      imagePreviewTransform.dragOriginY = imagePreviewTransform.translateY;
+      imagePreviewTransform.dragClientX = event.clientX;
+      imagePreviewTransform.dragClientY = event.clientY;
+      imagePreviewTransform.dragMoved = false;
+      if (imagePreviewStage.setPointerCapture) imagePreviewStage.setPointerCapture(event.pointerId);
+      applyImagePreviewTransform();
+      return true;
+    }
+
+    function updateImagePreviewDrag() {
+      imagePreviewTransform.dragFrame = 0;
+      imagePreviewTransform.translateX = imagePreviewTransform.dragOriginX + imagePreviewTransform.dragClientX - imagePreviewTransform.dragStartX;
+      imagePreviewTransform.translateY = imagePreviewTransform.dragOriginY + imagePreviewTransform.dragClientY - imagePreviewTransform.dragStartY;
+      clampImagePreviewTranslation();
+      applyImagePreviewTransform();
+    }
+
+    function handleImagePreviewPointerMove(event) {
+      if (!event || imagePreviewTransform.pointerId === null || event.pointerId !== imagePreviewTransform.pointerId) return false;
+      const deltaX = event.clientX - imagePreviewTransform.dragStartX;
+      const deltaY = event.clientY - imagePreviewTransform.dragStartY;
+      if (!imagePreviewTransform.dragMoved && Math.hypot(deltaX, deltaY) < IMAGE_PREVIEW_DRAG_THRESHOLD) return false;
+      event.preventDefault();
+      imagePreviewTransform.dragMoved = true;
+      imagePreviewTransform.dragClientX = event.clientX;
+      imagePreviewTransform.dragClientY = event.clientY;
+      if (!imagePreviewTransform.dragFrame) {
+        imagePreviewTransform.dragFrame = requestAnimationFrame(updateImagePreviewDrag);
+      }
+      return true;
+    }
+
+    function handleImagePreviewPointerEnd(event) {
+      if (!event || imagePreviewTransform.pointerId === null || event.pointerId !== imagePreviewTransform.pointerId) return false;
+      if (imagePreviewTransform.dragFrame) {
+        cancelAnimationFrame(imagePreviewTransform.dragFrame);
+        imagePreviewTransform.dragClientX = event.clientX;
+        imagePreviewTransform.dragClientY = event.clientY;
+        updateImagePreviewDrag();
+      }
+      releaseImagePreviewPointer();
+      if (event.type === 'pointercancel') imagePreviewTransform.dragMoved = false;
+      applyImagePreviewTransform();
+      return true;
+    }
+
+    function updateImagePreviewControls() {
+      const total = imagePreviewItems.length;
+      const hasMultiple = total > 1;
+      imagePreviewPrev.hidden = !hasMultiple;
+      imagePreviewNext.hidden = !hasMultiple;
+      imagePreviewCount.hidden = !hasMultiple;
+      imagePreviewPrev.disabled = !hasMultiple || imagePreviewIndex <= 0;
+      imagePreviewNext.disabled = !hasMultiple || imagePreviewIndex >= total - 1;
+      imagePreviewCount.textContent = hasMultiple ? (imagePreviewIndex + 1) + ' / ' + total : '';
+    }
+
+    function showImagePreviewAt(index) {
+      if (!Number.isInteger(index) || index < 0 || index >= imagePreviewItems.length) return false;
+      const button = imagePreviewItems[index];
+      const image = button && button.querySelector ? button.querySelector('img') : null;
+      if (!image || image.hidden) return false;
+      const attrSrc = image.getAttribute ? image.getAttribute('src') : '';
+      const src = attrSrc || image.currentSrc || image.src || '';
+      if (!src) return false;
+      const title = button && button.getAttribute ? button.getAttribute('title') : '';
+      resetImagePreviewTransform();
+      imagePreviewIndex = index;
+      imagePreviewTrigger = button;
+      imagePreviewStatus.hidden = true;
+      imagePreviewStatus.textContent = '';
+      imagePreviewImage.hidden = false;
       imagePreviewImage.src = src;
-      imagePreviewImage.alt = alt || '';
-      imagePreviewModal.hidden = false;
-      imagePreviewClose.focus();
+      imagePreviewImage.alt = image.alt || title || '';
+      updateImagePreviewControls();
+      return true;
     }
 
     function openImagePreviewFromButton(button) {
-      const image = button && button.querySelector ? button.querySelector('img') : null;
-      if (!image) return;
-      const attrSrc = image.getAttribute ? image.getAttribute('src') : '';
-      const src = attrSrc || image.currentSrc || image.src || '';
-      const title = button && button.getAttribute ? button.getAttribute('title') : '';
-      openImagePreview(src, image.alt || title || '');
+      const group = button && button.closest ? button.closest('.message-images') : null;
+      if (!group || !group.querySelectorAll) return;
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
+      imagePreviewItems = Array.from(group.querySelectorAll('.message-image-button:not(:disabled)')).filter(candidate => {
+        const image = candidate && candidate.querySelector ? candidate.querySelector('img') : null;
+        return !!image && !image.hidden;
+      });
+      const index = imagePreviewItems.indexOf(button);
+      if (!showImagePreviewAt(index)) {
+        imagePreviewItems = [];
+        imagePreviewIndex = -1;
+        imagePreviewTrigger = null;
+        return;
+      }
+      imagePreviewModal.hidden = false;
+      imagePreviewClose.focus();
     }
 
     function closeImagePreview() {
       if (!imagePreviewModal || imagePreviewModal.hidden) return;
       const trigger = imagePreviewTrigger;
       imagePreviewModal.hidden = true;
+      resetImagePreviewTransform();
       imagePreviewImage.src = '';
       imagePreviewImage.alt = '';
-      imagePreviewTrigger = null;
-      if (trigger && typeof trigger.focus === 'function') {
+      imagePreviewImage.hidden = false;
+      imagePreviewItems = [];
+      imagePreviewIndex = -1;
+      imagePreviewStatus.hidden = true;
+      imagePreviewStatus.textContent = '';
+      updateImagePreviewControls();
+      if (trigger && typeof trigger.focus === 'function' && (!document.contains || document.contains(trigger))) {
         trigger.focus();
+      }
+      imagePreviewTrigger = null;
+    }
+
+    function handleImagePreviewKeydown(event) {
+      if (!imagePreviewModal || imagePreviewModal.hidden || !event) return;
+      if (!['ArrowLeft', 'ArrowRight', 'Escape'].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Escape') {
+        closeImagePreview();
+        return;
+      }
+      showImagePreviewAt(imagePreviewIndex + (event.key === 'ArrowLeft' ? -1 : 1));
+    }
+
+    function getEventImageSource(image) {
+      if (!image) return '';
+      if (typeof image === 'string') return image;
+      if (image.type !== 'local') return String(image.src || '');
+      if (image.status === 'too-large' || !image.imageId) return '';
+      const session = getSelectedSession();
+      const sessionKey = getSessionKey(session);
+      if (!sessionKey) return '';
+      return SESSION_IMAGE_API_URL +
+        '?sourceId=' + encodeURIComponent(getCurrentSourceId()) +
+        '&sessionKey=' + encodeURIComponent(sessionKey) +
+        '&imageId=' + encodeURIComponent(String(image.imageId));
+    }
+
+    function hashMessageImageSource(value) {
+      const text = String(value || '');
+      let hash = 2166136261;
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(36);
+    }
+
+    function getMessageImageFailureKey(image, src) {
+      const sourceId = encodeURIComponent(String(getCurrentSourceId() || ''));
+      const sessionKey = encodeURIComponent(String(getSessionKey(getSelectedSession()) || ''));
+      const source = String(src || '');
+      let imageKey = 'src:' + source;
+      if (image && typeof image !== 'string' && image.type === 'local' && image.imageId) {
+        imageKey = 'local:' + String(image.imageId);
+      } else if (/^data:/i.test(source)) {
+        imageKey = 'data:' + source.length + ':' + hashMessageImageSource(source);
+      }
+      return sourceId + '|' + sessionKey + '|' + imageKey;
+    }
+
+    function rememberFailedMessageImage(key) {
+      if (!key) return;
+      if (failedMessageImageKeys.has(key)) failedMessageImageKeys.delete(key);
+      failedMessageImageKeys.set(key, true);
+      while (failedMessageImageKeys.size > MAX_FAILED_MESSAGE_IMAGE_KEYS) {
+        const oldestKey = failedMessageImageKeys.keys().next().value;
+        failedMessageImageKeys.delete(oldestKey);
+      }
+    }
+
+    function clearFailedMessageImageCache() {
+      failedMessageImageKeys.clear();
+    }
+
+    function handleMessageImageError(image) {
+      if (!image) return;
+      const failureKey = image.getAttribute ? image.getAttribute('data-image-failure-key') : '';
+      if (failureKey) rememberFailedMessageImage(failureKey);
+      image.hidden = true;
+      const button = image.closest ? image.closest('.message-image-button') : null;
+      const status = button && button.querySelector ? button.querySelector('.message-image-status') : null;
+      if (status) status.hidden = false;
+      if (button) {
+        button.disabled = true;
+        button.removeAttribute('onclick');
       }
     }
 
@@ -3683,12 +5199,23 @@
       const images = event && Array.isArray(event.images) ? event.images : [];
       if (!images.length) return '';
       const items = images.map((image, index) => {
-        const src = String((image && image.src) || image || '');
+        if (image && image.status === 'too-large') {
+          return '<span class="message-image-status">图片过大，无法预览</span>';
+        }
+        const src = getEventImageSource(image);
         if (!src) return '';
-        const escapedSrc = escapeHtml(src);
         const label = '查看图片 ' + (index + 1);
+        const failureKey = getMessageImageFailureKey(image, src);
+        if (failedMessageImageKeys.has(failureKey)) {
+          return '<button type="button" class="message-image-button" disabled title="' + escapeHtml(label) + '">' +
+            '<span class="message-image-status">图片无法加载</span>' +
+            '</button>';
+        }
+        const escapedSrc = escapeHtml(src);
+        const escapedFailureKey = escapeHtml(failureKey);
         return '<button type="button" class="message-image-button" onclick="openImagePreviewFromButton(this)" title="' + escapeHtml(label) + '">' +
-          '<img class="message-image-thumb" src="' + escapedSrc + '" loading="lazy" alt="' + escapeHtml(label) + '">' +
+          '<img class="message-image-thumb" src="' + escapedSrc + '" data-image-failure-key="' + escapedFailureKey + '" loading="lazy" alt="' + escapeHtml(label) + '" onerror="handleMessageImageError(this)">' +
+          '<span class="message-image-status" hidden>图片无法加载</span>' +
           '</button>';
       }).filter(Boolean).join('');
       return items ? '<div class="message-images">' + items + '</div>' : '';
@@ -3918,16 +5445,22 @@
 
     function renderEvent(event, options) {
       const copyButton = renderCopyButton(event);
+      const searchClass = event.isDirectSearchHit
+        ? ' is-search-direct-hit'
+        : (event.isSearchCompanion ? ' is-search-companion' : '');
       if (event.kind === 'user') {
         const questionKey = (options && options.questionKey) || event.questionKey || '';
         const dataAttrs = questionKey ? ' data-question-key="' + escapeHtml(questionKey) + '" tabindex="0"' : '';
         const activeClass = options && options.isCurrentQuestion ? ' is-current-question' : '';
-        const contextLabel = event.isSearchContext ? '<span class="context-label">上下文提问</span>' : '';
-        return '<article class="message user message-question' + activeClass + '"' + dataAttrs + '><div class="message-head"><span class="message-head-main"><span class="role">用户</span>' + contextLabel + '<span>' + escapeHtml(event.timestampLocal || '') + '</span></span>' + copyButton + '</div><div class="message-blocks">' + renderDeterministicMarkdown(event.rawText || '') + renderEventImages(event) + '</div></article>';
+        return '<article class="message user message-question' + activeClass + searchClass + '"' + dataAttrs + '><div class="message-head"><span class="message-head-main"><span class="role">用户</span><span>' + escapeHtml(event.timestampLocal || '') + '</span></span>' + copyButton + '</div><div class="message-blocks">' + renderDeterministicMarkdown(event.rawText || '') + renderEventImages(event) + '</div></article>';
       }
 
       if (event.kind === 'assistant_final') {
-        return '<article class="message message--final assistant"><div class="message-head"><span class="message-head-main"><span class="role">Assistant</span><span>' + escapeHtml(event.timestampLocal || '') + '</span></span>' + copyButton + '</div><div class="message-blocks">' + renderDeterministicMarkdown(event.rawText || '') + '</div></article>';
+        const answerForQuestionKey = options && options.answerForQuestionKey ? options.answerForQuestionKey : '';
+        const answerDataAttr = answerForQuestionKey
+          ? ' data-answer-for-question-key="' + escapeHtml(answerForQuestionKey) + '"'
+          : '';
+        return '<article class="message message--final assistant' + searchClass + '"' + answerDataAttr + '><div class="message-head"><span class="message-head-main"><span class="role">Assistant</span><span>' + escapeHtml(event.timestampLocal || '') + '</span></span>' + copyButton + '</div><div class="message-blocks">' + renderDeterministicMarkdown(event.rawText || '') + '</div></article>';
       }
 
       return '';
@@ -3976,7 +5509,7 @@
       return '<button type="button" onclick="copyCurrentPath()" title="复制当前会话路径">路径</button>' +
         '<button type="button" onclick="exportSelectedMarkdown()">导出 MD</button>' +
         sessionButton +
-        '<button type="button" id="refreshCurrentButton" class="quick-refresh-btn" onclick="refreshCurrentSession()" title="只重新读取当前会话">快刷</button>' +
+        '<button type="button" id="refreshCurrentButton" class="quick-refresh-btn" onclick="refreshCurrentSession()" title="只重新读取当前会话"' + ((typeof getSourceCapability !== 'function' || getSourceCapability('canQuickRefresh')) ? '' : ' disabled') + '>快刷</button>' +
       '';
     }
 
@@ -4001,6 +5534,13 @@
     function findQuestionElement(questionKey) {
       if (!questionKey || !transcript) return null;
       return Array.from(transcript.querySelectorAll('[data-question-key]')).find(node => node.dataset.questionKey === questionKey) || null;
+    }
+
+    function findAnswerElement(questionKey) {
+      if (!questionKey || !transcript) return null;
+      return Array.from(transcript.querySelectorAll('[data-answer-for-question-key]')).find(node => {
+        return node.dataset.answerForQuestionKey === questionKey;
+      }) || null;
     }
 
     let activeQuestionScrollAnimation = 0;
@@ -4035,11 +5575,55 @@
       }
     }
 
-    function calculateQuestionScrollSpacer(element) {
+    function calculateTranscriptScrollSpacer(element) {
       if (!transcript || !element) return 0;
-      const remainingBelow = Math.max(0, transcript.scrollHeight - (element.offsetTop + element.offsetHeight));
+      const currentSpacerValue = transcript.style && typeof transcript.style.getPropertyValue === 'function'
+        ? Number.parseFloat(transcript.style.getPropertyValue('--transcript-scroll-spacer'))
+        : 0;
+      const currentSpacer = Number.isFinite(currentSpacerValue) ? Math.max(0, currentSpacerValue) : 0;
+      const remainingBelow = Math.max(0, transcript.scrollHeight - currentSpacer - (element.offsetTop + element.offsetHeight));
       const requiredBelow = Math.max(0, transcript.clientHeight - element.offsetHeight - 32);
       return Math.max(0, requiredBelow - remainingBelow + 32);
+    }
+
+    function scrollElementToTranscriptTop(element) {
+      if (!transcript || !element || typeof transcript.scrollTo !== 'function') return false;
+      cancelQuestionScrollAnimation();
+      const token = ++activeQuestionScrollToken;
+      lockTranscriptLayoutForProgrammaticScroll(250);
+      const measureElementTop = () => {
+        return typeof element.getBoundingClientRect === 'function' && typeof transcript.getBoundingClientRect === 'function'
+          ? element.getBoundingClientRect().top - transcript.getBoundingClientRect().top
+          : 16;
+      };
+      const measureTargetTop = () => Math.max(0, (transcript.scrollTop || 0) + measureElementTop() - 16);
+      const prepareSpacer = () => {
+        if (transcript.style) {
+          transcript.style.setProperty('--transcript-scroll-spacer', '0px');
+          let spacer = calculateTranscriptScrollSpacer(element);
+          transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+          const missingScrollRoom = measureTargetTop() - Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+          if (missingScrollRoom > 0) {
+            spacer += missingScrollRoom;
+            transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
+          }
+        }
+      };
+      const scrollToMeasuredTarget = () => transcript.scrollTo({ top: measureTargetTop(), behavior: 'auto' });
+      requestAnimationFrame(() => {
+        if (token !== activeQuestionScrollToken) return;
+        prepareSpacer();
+        scrollToMeasuredTarget();
+        requestAnimationFrame(() => {
+          if (token !== activeQuestionScrollToken) return;
+          unlockTranscriptLayoutForProgrammaticScroll();
+          requestAnimationFrame(() => {
+            if (token !== activeQuestionScrollToken) return;
+            if (Math.abs(measureElementTop() - 16) > 6) scrollToMeasuredTarget();
+          });
+        });
+      });
+      return true;
     }
 
     function scrollTranscriptTo(top, behavior, fallbackElement, options) {
@@ -4099,7 +5683,7 @@
           const element = findQuestionElement(questionKey);
           if (!element || !transcript) return;
           if (transcript.style) {
-            const spacer = calculateQuestionScrollSpacer(element);
+            const spacer = calculateTranscriptScrollSpacer(element);
             transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
           }
           let targetTop = element.offsetTop - 16;
@@ -4128,7 +5712,7 @@
           return;
         }
         if (transcript.style) {
-          const spacer = calculateQuestionScrollSpacer(element);
+          const spacer = calculateTranscriptScrollSpacer(element);
           transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
         }
         let targetTop = element.offsetTop - 16;
@@ -4166,7 +5750,7 @@
         const element = findQuestionElement(questionKey);
         if (!element || !transcript || typeof scrollToMeasuredTarget !== 'function') return;
         if (transcript.style) {
-          const spacer = calculateQuestionScrollSpacer(element);
+          const spacer = calculateTranscriptScrollSpacer(element);
           transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
         }
         if (Math.abs(measureElementTop(element) - 16) > 6) {
@@ -4181,7 +5765,7 @@
           return;
         }
         if (transcript.style) {
-          const spacer = calculateQuestionScrollSpacer(element);
+          const spacer = calculateTranscriptScrollSpacer(element);
           transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
         }
         const measureTargetTop = () => {
@@ -4219,7 +5803,7 @@
         return true;
       }
       if (transcript && transcript.style) {
-        const spacer = calculateQuestionScrollSpacer(element);
+        const spacer = calculateTranscriptScrollSpacer(element);
         transcript.style.setProperty('--transcript-scroll-spacer', spacer + 'px');
       }
       let targetTop = element.offsetTop - 16;
@@ -4280,11 +5864,39 @@
       const questions = getNavigableQuestionKeys();
       if (!questions.length) return;
       let index = questions.indexOf(selectedQuestionKey);
+      if (viewerSearchQuery.trim() && index < 0) return;
       if (index < 0) index = direction > 0 ? -1 : questions.length;
       const nextIndex = Math.max(0, Math.min(questions.length - 1, index + direction));
       const nextQuestionKey = questions[nextIndex];
       if (!nextQuestionKey) return;
       setSelectedQuestionKey(nextQuestionKey, { scroll: true, behavior: 'keyboard' });
+    }
+
+    function handleTranscriptEnter(event) {
+      if (!event || event.key !== 'Enter' || event.isComposing) return false;
+      if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
+      if (!selectedQuestionKey || !transcript) return false;
+      if (typeof imagePreviewModal !== 'undefined' && imagePreviewModal && !imagePreviewModal.hidden) return false;
+      if (typeof noteModal !== 'undefined' && noteModal && !noteModal.hidden) return false;
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      if (active !== transcript && (!transcript.contains || !transcript.contains(active))) return false;
+      if (event.target && event.target.closest && event.target.closest('button, a, input, textarea, select, [contenteditable="true"]')) {
+        return false;
+      }
+      event.preventDefault();
+      if (viewerViewMode === 'questions') {
+        pendingAnswerFocusQuestionKey = selectedQuestionKey;
+        viewerViewMode = 'all';
+        renderViewer();
+        return true;
+      }
+      const answer = findAnswerElement(selectedQuestionKey);
+      if (!answer) {
+        showToast('该提问暂时没有最终回答', { duration: 2200 });
+        return false;
+      }
+      scrollElementToTranscriptTop(answer);
+      return true;
     }
 
     function handleQuestionSelectionFromRender() {
@@ -4310,7 +5922,14 @@
         button.classList.toggle('active', button.dataset.viewMode === viewerViewMode);
       });
       viewerToolbar.querySelectorAll('button[data-search-scope]').forEach(button => {
-        button.classList.toggle('active', button.dataset.searchScope === viewerSearchScope);
+        const active = button.dataset.searchScope === viewerSearchScope;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      viewerToolbar.querySelectorAll('button[data-search-field]').forEach(button => {
+        const active = button.dataset.searchField === 'questions' && viewerSearchQuestionsOnly;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', viewerSearchQuestionsOnly ? 'true' : 'false');
       });
       updateQuestionNavState();
       syncReplyComposer();
@@ -4320,6 +5939,7 @@
       resetMessageCopyTexts();
       const output = [];
       let processItems = [];
+      let currentQuestionKey = '';
       const selectedKey = options && options.selectedQuestionKey ? options.selectedQuestionKey : '';
 
       function flushProcessItems() {
@@ -4338,8 +5958,9 @@
 
         if (event.kind === 'user') {
           flushProcessItems();
+          currentQuestionKey = event.questionKey || '';
           output.push(renderEvent(event, {
-            questionKey: event.questionKey || '',
+            questionKey: currentQuestionKey,
             isCurrentQuestion: !!event.questionKey && event.questionKey === selectedKey
           }));
           return;
@@ -4347,7 +5968,7 @@
 
         if (event.kind === 'assistant_final') {
           flushProcessItems();
-          output.push(renderEvent(event));
+          output.push(renderEvent(event, { answerForQuestionKey: currentQuestionKey }));
         }
       });
 
@@ -4356,15 +5977,19 @@
     }
 
     function renderViewer() {
+      if (typeof imagePreviewModal !== 'undefined' && imagePreviewModal && !imagePreviewModal.hidden && typeof closeImagePreview === 'function') {
+        closeImagePreview();
+      }
       const session = getSelectedSession();
+      const hasSearchQuery = getSearchTerms(viewerSearchQuery).length > 0;
       if (!session) {
         resetMessageCopyTexts();
         const searchMessage = getGlobalSearchEmptyText() || getEmptySourceText();
-        viewerHead.innerHTML = getGlobalSearchQuery()
+        viewerHead.innerHTML = hasSearchQuery
           ? '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>'
           : '<div class="empty-state">' + escapeHtml(searchMessage || '左侧选中一个标题后，这里会显示完整聊天内容。') + '</div>';
         syncViewerToolbar(null);
-        transcript.innerHTML = getGlobalSearchQuery()
+        transcript.innerHTML = hasSearchQuery
           ? '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>'
           : '';
         selectedQuestionKey = null;
@@ -4405,18 +6030,13 @@
       const events = getVisibleDetailEvents();
       const questionFocus = pendingQuestionFocus;
       pendingQuestionFocus = null;
-      if (query) {
-        const visibleQuestionKeys = [];
-        events.forEach(event => {
-          if (event && event.kind === 'user' && event.questionKey && !visibleQuestionKeys.includes(event.questionKey)) {
-            visibleQuestionKeys.push(event.questionKey);
-          }
-        });
-        if (!visibleQuestionKeys.includes(selectedQuestionKey)) {
-          selectedQuestionKey = visibleQuestionKeys[0] || null;
-          selectedQuestionKeyIsTemporary = !!selectedQuestionKey;
-        }
-      } else {
+      const answerFocusQuestionKey = typeof pendingAnswerFocusQuestionKey !== 'undefined'
+        ? pendingAnswerFocusQuestionKey
+        : null;
+      if (answerFocusQuestionKey && typeof pendingAnswerFocusQuestionKey !== 'undefined') {
+        pendingAnswerFocusQuestionKey = null;
+      }
+      if (!query) {
         syncSelectedQuestionKey(questionFocus, { useProgressAnchor: !questionFocus });
       }
       if (!events.length) {
@@ -4425,8 +6045,8 @@
         transcript.innerHTML = query
           ? '<div class="empty-state">' + escapeHtml(searchMessage || ('当前会话中没有匹配“' + viewerSearchQuery + '”的内容。')) + '</div>'
           : '<div class="empty-state">这条会话没有匹配当前视图的内容。</div>';
-        if (query) selectedQuestionKeyIsTemporary = !!selectedQuestionKey;
         highlightCurrentQuestion();
+        if (answerFocusQuestionKey) showToast('该提问暂时没有最终回答', { duration: 2200 });
         return;
       }
 
@@ -4438,13 +6058,21 @@
         hydrateOpenLazyDetails(transcript);
         highlightMatchesInElement(transcript, getSearchTerms(viewerSearchQuery));
         highlightCurrentQuestion();
-        if (selectedQuestionKey && (questionFocus || viewerViewMode === 'all')) {
+        if (answerFocusQuestionKey) {
+          requestAnimationFrame(() => {
+            const answer = findAnswerElement(answerFocusQuestionKey);
+            if (answer) scrollElementToTranscriptTop(answer);
+            else showToast('该提问暂时没有最终回答', { duration: 2200 });
+          });
+        } else if (selectedQuestionKey && (questionFocus || viewerViewMode === 'all')) {
           requestAnimationFrame(() => scrollToQuestion(selectedQuestionKey, 'auto'));
         }
       updateReplyComposerState();
     }
 
     async function selectSessionFromTitlePane(session) {
+      if (typeof confirmSearchHistoryQuery === 'function') confirmSearchHistoryQuery();
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
       syncSessionListSelection();
       await selectSession(session, { syncLists: false });
     }
@@ -4486,6 +6114,156 @@
     if (sourceSelect) {
       sourceSelect.addEventListener('change', event => {
         void switchSource(event.target.value || 'local-codex');
+      });
+    }
+    if (cloudSettingsButton) cloudSettingsButton.addEventListener('click', () => { void openWebdavSettings(); });
+    if (syncButton) syncButton.addEventListener('click', () => { void startCurrentSync(''); });
+    if (webdavCloseButton) webdavCloseButton.addEventListener('click', closeWebdavSettings);
+    if (webdavModal) {
+      webdavModal.addEventListener('click', event => {
+        if (event.target === webdavModal) closeWebdavSettings();
+      });
+    }
+    if (webdavForm) {
+      webdavForm.addEventListener('submit', event => {
+        event.preventDefault();
+        void (async () => {
+          const values = collectWebdavForm();
+          const current = webdavState.settings || {};
+          const connectionChanged = !!current.connectionId && ['baseUrl', 'username', 'remoteRoot'].some(key => String(current[key] || '') !== String(values[key] || ''));
+          if (connectionChanged) values.clearOldConnectionCache = confirm('连接已经变化，是否同时清理旧连接的本机缓存？不会删除云端内容。');
+          try {
+            const payload = await webdavMutation('/settings', values);
+            applyWebdavSettings(payload);
+            if (payload.oldCacheCleanupOk === false) {
+              setWebdavStatus(formatWebdavCleanupFailures(payload.warning || '设置已保存，但部分旧连接本机缓存清理失败', payload.failed), true);
+            } else {
+              setWebdavStatus('设置已保存，尚未自动上传或下载。', false);
+            }
+            await refreshCloudSources(true);
+            await checkCurrentSourceStatus(true);
+          } catch (error) {
+            setWebdavStatus('保存失败：' + (error.message || '未知错误'), true);
+          } finally {
+            if (webdavPassword) webdavPassword.value = '';
+          }
+        })();
+      });
+    }
+    if (webdavCheckButton) {
+      webdavCheckButton.addEventListener('click', () => {
+        void (async () => {
+          webdavCheckButton.disabled = true;
+          setWebdavStatus('正在检查 WebDAV 方法和条件请求...', false);
+          try {
+            const payload = await webdavMutation('/check', collectWebdavForm());
+            const modeMessage = payload.commitMode === 'standard'
+              ? '标准条件请求模式检查通过'
+              : '坚果云兼容提交模式检查通过';
+            setWebdavStatus(payload.warning || payload.message || modeMessage, !!payload.warning || !payload.ok);
+          } catch (error) {
+            setWebdavStatus('检查失败：' + (error.message || '未知错误'), true);
+          } finally {
+            webdavCheckButton.disabled = false;
+            if (webdavPassword) webdavPassword.value = '';
+          }
+        })();
+      });
+    }
+    if (webdavDisableButton) {
+      webdavDisableButton.addEventListener('click', () => {
+        if (!confirm('停用 WebDAV？已下载的离线缓存会保留。')) return;
+        void webdavMutation('/disable', {}).then(payload => {
+          applyWebdavSettings(payload);
+          return refreshCloudSources(true);
+        }).catch(error => setWebdavStatus('停用失败：' + (error.message || '未知错误'), true));
+      });
+    }
+    if (webdavClearAllButton) {
+      webdavClearAllButton.addEventListener('click', () => {
+        if (!confirm('只清除本机全部云端缓存，不删除坚果云内容。确定继续吗？')) return;
+        void webdavMutation('/cache', { sourceId: '' }, 'DELETE').then(async payload => {
+          if (webdavState.settings) webdavState.settings.cache = payload.cache || [];
+          renderWebdavCache();
+          if (payload.ok === false || (payload.failed && payload.failed.length)) {
+            setWebdavStatus(formatWebdavCleanupFailures('部分云端缓存清理失败，请重试失败来源。', payload.failed), true);
+          } else {
+            setWebdavStatus('云端缓存已清理。', false);
+          }
+          await refreshCloudSources(true);
+        }).catch(async error => {
+          const payload = error && error.payload;
+          if (payload && webdavState.settings && Array.isArray(payload.cache)) {
+            webdavState.settings.cache = payload.cache;
+            renderWebdavCache();
+          }
+          setWebdavStatus(
+            payload && payload.failed && payload.failed.length
+              ? formatWebdavCleanupFailures('部分云端缓存清理失败，请重试失败来源。', payload.failed)
+              : '清理失败：' + (error.message || '未知错误'),
+            true,
+          );
+          await refreshCloudSources(true);
+        });
+      });
+    }
+    if (webdavUnregisterButton) {
+      webdavUnregisterButton.addEventListener('click', () => {
+        const expected = String((webdavState.settings && webdavState.settings.deviceDisplayName) || '');
+        const confirmationName = prompt('输入当前设备显示名以确认注销：', '');
+        if (confirmationName === null) return;
+        void webdavMutation('/unregister', { confirmationName, clearCache: !!(webdavUnregisterClearCache && webdavUnregisterClearCache.checked) }).then(payload => {
+          if (webdavUnregisterClearCache) webdavUnregisterClearCache.checked = false;
+          if (webdavState.settings && Array.isArray(payload.cache)) webdavState.settings.cache = payload.cache;
+          renderWebdavCache();
+          setWebdavStatus(
+            payload.localCacheCleanupOk === false
+              ? formatWebdavCleanupFailures(payload.warning || '云端注销成功，但本机缓存清理失败，可以稍后再次清除本机缓存。', payload.failed)
+              : (payload.message || '当前设备已从云端注销'),
+            payload.localCacheCleanupOk === false,
+          );
+          return checkCurrentSourceStatus(true);
+        }).catch(error => setWebdavStatus('注销失败：' + (error.message || '未知错误') + (expected ? '；当前设备名为 ' + expected : ''), true));
+      });
+    }
+    if (webdavCancelTask) {
+      webdavCancelTask.addEventListener('click', () => {
+        const taskId = webdavState.task && webdavState.task.taskId;
+        if (!taskId) return;
+        void webdavMutation('/task/cancel', { taskId }).then(payload => renderWebdavTask(payload.task)).catch(error => setWebdavStatus('取消失败：' + (error.message || '未知错误'), true));
+      });
+    }
+    if (webdavCacheList) {
+      webdavCacheList.addEventListener('click', event => {
+        const button = event.target && event.target.closest('button[data-clear-cloud-cache]');
+        if (!button) return;
+        const sourceId = button.dataset.clearCloudCache || '';
+        if (!confirm('只清除此来源的本机缓存，不删除坚果云内容。确定继续吗？')) return;
+        void webdavMutation('/cache', { sourceId }, 'DELETE').then(async payload => {
+          if (webdavState.settings) webdavState.settings.cache = payload.cache || [];
+          renderWebdavCache();
+          if (payload.ok === false || (payload.failed && payload.failed.length)) {
+            setWebdavStatus(formatWebdavCleanupFailures('此来源缓存清理失败，请稍后重试。', payload.failed), true);
+            return;
+          }
+          await refreshCloudSources(true);
+          if (sourceId === getCurrentSourceId() && Array.isArray(payload.cleared) && payload.cleared.includes(sourceId)) {
+            await switchSource('local-codex');
+          }
+        }).catch(async error => {
+          const payload = error && error.payload;
+          if (payload && webdavState.settings && Array.isArray(payload.cache)) {
+            webdavState.settings.cache = payload.cache;
+            renderWebdavCache();
+          }
+          setWebdavStatus(
+            payload && payload.failed && payload.failed.length
+              ? formatWebdavCleanupFailures('此来源缓存清理失败，请稍后重试。', payload.failed)
+              : '清理失败：' + (error.message || '未知错误'),
+            true,
+          );
+          await refreshCloudSources(true);
+        });
       });
     }
     Object.keys(collapseButtons).forEach(key => {
@@ -4533,12 +6311,12 @@
     viewerSearchInput.addEventListener('input', () => {
       viewerSearchQuery = viewerSearchInput.value || '';
       if (viewerSearchInputIsComposing) return;
-      if (!viewerSearchQuery.trim() && currentScopeSearchTimer) {
-        clearTimeout(currentScopeSearchTimer);
-        currentScopeSearchTimer = 0;
+      searchHistoryHighlightIndex = -1;
+      if (document.activeElement === viewerSearchInput && typeof openSearchHistoryMenu === 'function') openSearchHistoryMenu();
+      if (!viewerSearchQuery.trim()) {
         resetGlobalSearchStateForCurrentScope();
-        renderViewer();
-        restoreCurrentProgressAnchorIfReadable();
+        renderWorkspaceList(true);
+        restoreCurrentProgressAnchorIfReadable({ focusOnComplete: false });
         return;
       }
       scheduleViewerSearch();
@@ -4549,16 +6327,118 @@
     viewerSearchInput.addEventListener('compositionend', () => {
       viewerSearchInputIsComposing = false;
       viewerSearchQuery = viewerSearchInput.value || '';
-      if (!viewerSearchQuery.trim() && currentScopeSearchTimer) {
-        clearTimeout(currentScopeSearchTimer);
-        currentScopeSearchTimer = 0;
+      searchHistoryHighlightIndex = -1;
+      if (document.activeElement === viewerSearchInput && typeof openSearchHistoryMenu === 'function') openSearchHistoryMenu();
+      if (!viewerSearchQuery.trim()) {
         resetGlobalSearchStateForCurrentScope();
-        renderViewer();
-        restoreCurrentProgressAnchorIfReadable();
+        renderWorkspaceList(true);
+        restoreCurrentProgressAnchorIfReadable({ focusOnComplete: false });
         return;
       }
       scheduleViewerSearch();
     });
+    viewerSearchInput.addEventListener('focus', () => {
+      openSearchHistoryMenu();
+    });
+    viewerSearchInput.addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        moveSearchHistoryHighlight(event.key === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+      if (event.key === 'Escape') {
+        if (viewerSearchHistoryMenu && !viewerSearchHistoryMenu.hidden) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeSearchHistoryMenu();
+        }
+        return;
+      }
+      if (event.key !== 'Enter' || viewerSearchInputIsComposing || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const filteredItems = getFilteredSearchHistoryItems();
+      if (viewerSearchHistoryMenu && !viewerSearchHistoryMenu.hidden && searchHistoryHighlightIndex >= 0 && filteredItems[searchHistoryHighlightIndex]) {
+        useSearchHistoryItem(filteredItems[searchHistoryHighlightIndex]);
+        return;
+      }
+      viewerSearchQuery = viewerSearchInput.value || '';
+      confirmSearchHistoryQuery();
+      closeSearchHistoryMenu();
+      if (viewerSearchQuery.trim()) scheduleViewerSearch({ immediate: true });
+    });
+    if (viewerSearchHistoryButton) {
+      viewerSearchHistoryButton.addEventListener('click', event => {
+        event.preventDefault();
+        if (viewerSearchHistoryMenu && !viewerSearchHistoryMenu.hidden) {
+          closeSearchHistoryMenu();
+          return;
+        }
+        openSearchHistoryMenu();
+      });
+    }
+    if (viewerSearchHistoryList) {
+      viewerSearchHistoryList.addEventListener('mousedown', event => {
+        if (event.target && event.target.closest('button')) event.preventDefault();
+      });
+      viewerSearchHistoryList.addEventListener('mousemove', event => {
+        const row = event.target && event.target.closest('.search-history-item');
+        if (!row) return;
+        const rows = Array.from(viewerSearchHistoryList.querySelectorAll('.search-history-item'));
+        const index = rows.indexOf(row);
+        if (index >= 0 && index !== searchHistoryHighlightIndex) setSearchHistoryHighlight(index, { scroll: false });
+      });
+      viewerSearchHistoryList.addEventListener('click', event => {
+        const row = event.target && event.target.closest('.search-history-item');
+        if (!row) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const value = row._searchHistoryValue || '';
+        if (event.target.closest('.search-history-delete')) {
+          deleteSearchHistoryItem(value);
+          if (viewerSearchInput) viewerSearchInput.focus({ preventScroll: true });
+          return;
+        }
+        if (event.target.closest('.search-history-value')) useSearchHistoryItem(value);
+      });
+    }
+    if (viewerSearchHistoryClear) {
+      viewerSearchHistoryClear.addEventListener('mousedown', event => event.preventDefault());
+      viewerSearchHistoryClear.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        clearSearchHistory();
+        if (viewerSearchInput) viewerSearchInput.focus({ preventScroll: true });
+      });
+    }
+    if (viewerSearchHistoryMenu) {
+      viewerSearchHistoryMenu.addEventListener('keydown', event => {
+        if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === 'Escape') {
+          closeSearchHistoryMenu();
+          if (viewerSearchInput) viewerSearchInput.focus({ preventScroll: true });
+          return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          moveSearchHistoryHighlight(event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        const items = getFilteredSearchHistoryItems();
+        if (searchHistoryHighlightIndex >= 0 && items[searchHistoryHighlightIndex]) useSearchHistoryItem(items[searchHistoryHighlightIndex]);
+      });
+    }
+    if (viewerSearchHistoryControl) {
+      viewerSearchHistoryControl.addEventListener('focusout', () => {
+        setTimeout(() => {
+          if (viewerSearchHistoryControl.contains(document.activeElement)) return;
+          confirmSearchHistoryQuery();
+          closeSearchHistoryMenu();
+        }, 0);
+      });
+    }
     if (replyInput) {
       replyInput.addEventListener('input', () => {
         persistReplyDraft();
@@ -4584,6 +6464,11 @@
         resetReplyInputMetrics();
         scheduleReplyComposerUpdate();
       });
+      window.addEventListener('focus', () => {
+        void refreshCloudSources(false);
+        void checkCurrentSourceStatus(false);
+      });
+      window.addEventListener('pagehide', resetSearchHistoryClearConfirmation);
     }
     viewerToolbar.addEventListener('click', event => {
       const navButton = event.target.closest('button[data-question-nav]');
@@ -4595,6 +6480,9 @@
       }
       const scopeButton = event.target.closest('button[data-search-scope]');
       if (scopeButton) {
+        if (typeof confirmSearchHistoryQuery === 'function') confirmSearchHistoryQuery();
+        if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
+        saveProgressAnchorForCurrentSession();
         const previousScope = viewerSearchScope;
         viewerSearchScope = scopeButton.dataset.searchScope || 'all';
         if (viewerSearchScope === 'current') {
@@ -4608,7 +6496,18 @@
           clearTimeout(currentScopeSearchTimer);
           currentScopeSearchTimer = 0;
         }
-        scheduleGlobalSearch();
+        scheduleViewerSearch();
+        return;
+      }
+      const fieldButton = event.target.closest('button[data-search-field]');
+      if (fieldButton && fieldButton.dataset.searchField === 'questions') {
+        if (typeof confirmSearchHistoryQuery === 'function') confirmSearchHistoryQuery();
+        if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
+        saveProgressAnchorForCurrentSession();
+        viewerSearchQuestionsOnly = !viewerSearchQuestionsOnly;
+        resetGlobalSearchStateForCurrentScope();
+        syncViewerToolbar(getSelectedSession());
+        scheduleViewerSearch({ immediate: true });
         return;
       }
       const button = event.target.closest('button[data-view-mode]');
@@ -4627,6 +6526,8 @@
       transcript.focus({ preventScroll: true });
       const question = event.target.closest('[data-question-key]');
       if (!question) return;
+      if (typeof confirmSearchHistoryQuery === 'function') confirmSearchHistoryQuery();
+      if (typeof closeSearchHistoryMenu === 'function') closeSearchHistoryMenu();
       setSelectedQuestionKey(question.dataset.questionKey, { scroll: false });
     });
     transcript.addEventListener('toggle', event => {
@@ -4634,9 +6535,14 @@
       hydrateLazyDetail(event.target);
     }, true);
     document.addEventListener('keydown', event => {
+      if (imagePreviewModal && !imagePreviewModal.hidden) return;
       const active = document.activeElement;
       if (active !== transcript && !transcript.contains(active)) return;
       if (event.target && event.target.closest('button, a, input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key === 'Enter') {
+        handleTranscriptEnter(event);
+        return;
+      }
       if (event.key && event.key.toLowerCase() === 'k') {
         if (runRefreshRequest._running) return;
         event.preventDefault();
@@ -4704,11 +6610,57 @@
     }
     if (imagePreviewModal) {
       imagePreviewModal.addEventListener('click', event => {
-        if (event.target === imagePreviewModal) closeImagePreview();
+        if (imagePreviewTransform.dragMoved) {
+          imagePreviewTransform.dragMoved = false;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        const protectedTarget = event.target && event.target.closest
+          ? event.target.closest('#imagePreviewImage, #imagePreviewPrev, #imagePreviewNext, #imagePreviewCount, #imagePreviewClose')
+          : null;
+        if (!protectedTarget) closeImagePreview();
       });
     }
     if (imagePreviewClose) {
       imagePreviewClose.addEventListener('click', closeImagePreview);
+    }
+    if (imagePreviewPrev) {
+      imagePreviewPrev.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        showImagePreviewAt(imagePreviewIndex - 1);
+      });
+    }
+    if (imagePreviewNext) {
+      imagePreviewNext.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        showImagePreviewAt(imagePreviewIndex + 1);
+      });
+    }
+    if (imagePreviewStage) {
+      imagePreviewStage.addEventListener('wheel', queueImagePreviewZoom, { passive: false });
+      imagePreviewStage.addEventListener('pointerdown', handleImagePreviewPointerDown);
+      imagePreviewStage.addEventListener('pointermove', handleImagePreviewPointerMove);
+      imagePreviewStage.addEventListener('pointerup', handleImagePreviewPointerEnd);
+      imagePreviewStage.addEventListener('pointercancel', handleImagePreviewPointerEnd);
+    }
+    if (imagePreviewImage) {
+      imagePreviewImage.addEventListener('dragstart', event => event.preventDefault());
+      imagePreviewImage.addEventListener('load', () => {
+        imagePreviewImage.hidden = false;
+        imagePreviewStatus.hidden = true;
+        imagePreviewStatus.textContent = '';
+        clampImagePreviewTranslation();
+        applyImagePreviewTransform();
+      });
+      imagePreviewImage.addEventListener('error', () => {
+        resetImagePreviewTransform();
+        imagePreviewImage.hidden = true;
+        imagePreviewStatus.textContent = '图片无法加载';
+        imagePreviewStatus.hidden = false;
+      });
     }
     if (noteInput) {
       noteInput.addEventListener('keydown', event => {
@@ -4724,6 +6676,9 @@
       });
     }
     document.addEventListener('click', event => {
+      if (viewerSearchHistoryControl && !viewerSearchHistoryControl.contains(event.target)) {
+        closeSearchHistoryMenu();
+      }
       document.querySelectorAll(MENU_SELECTOR + '[open]').forEach(menu => {
         if (!menu.contains(event.target)) {
           menu.removeAttribute('open');
@@ -4733,24 +6688,25 @@
         closeNoteMenu();
       }
     });
+    document.addEventListener('keydown', handleImagePreviewKeydown, true);
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
-      if (imagePreviewModal && !imagePreviewModal.hidden) {
-        event.preventDefault();
-        closeImagePreview();
-        return;
-      }
+      closeSearchHistoryMenu();
       closeNoteMenu();
       if (noteModal && !noteModal.hidden) closeNoteModal();
+      if (webdavModal && !webdavModal.hidden) closeWebdavSettings();
       hideNoteTooltip();
     });
 
     syncPaneCollapseState();
 
     (async function boot() {
+      loadSearchHistory();
       viewerHead.innerHTML = '<div class="empty-state">正在加载索引...</div>';
       transcript.innerHTML = '';
       try {
+        await loadSessionToken();
+        await loadWebdavSettings().catch(error => console.warn('云设置读取失败', error));
         await loadSources();
         await loadIndex();
         await loadNotes();
@@ -4759,6 +6715,10 @@
         renderWorkspaceList(true);
         await loadSelectedDetailIfAvailable();
         renderViewer();
+        updateTopSourceActions();
+        void refreshCloudSources(true);
+        void checkCurrentSourceStatus(true);
+        void pollWebdavTask();
       } catch (error) {
         viewerHead.innerHTML = '<div class="empty-state">索引加载失败。</div>';
         transcript.innerHTML = '<div class="empty-state">' + escapeHtml(error.message || '未知错误') + '</div>';
