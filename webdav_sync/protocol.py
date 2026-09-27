@@ -9,6 +9,7 @@ import tempfile
 import uuid
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable, Iterable
 
@@ -17,10 +18,13 @@ MIB = 1024 * 1024
 OBJECT_THRESHOLD = 1 * MIB
 CHUNK_SIZE = 64 * MIB
 PROTOCOL = "YujiSync/v1"
+IMAGE_PROTOCOL = "YujiImageSync/v1"
 SCHEMA_VERSION = 1
 BUFFER_SIZE = 256 * 1024
 MAX_NOTES_OBJECT_BYTES = 64 * MIB
+MAX_IMAGE_OBJECT_BYTES = 30 * MIB
 VALID_SOURCE_TYPES = {"local-codex", "local-claude"}
+VALID_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"}
 VALID_ROOT_KINDS = {"sessions", "archived_sessions", "projects", "sessions_metadata", "claude_desktop"}
 VALID_RECORD_FORMATS = {"jsonl", "json"}
 VALID_ENTRYPOINTS = {"", "cli", "claude-desktop-3p"}
@@ -150,6 +154,178 @@ def notes_revision_id(document: dict) -> str:
 
 def manifest_revision_id(manifest: dict) -> str:
     return sha256_bytes(canonical_json_bytes(manifest))
+
+
+def _image_manifest_core(device_id: str, source_type: str, assets: Iterable[dict], references: Iterable[dict]) -> dict:
+    if source_type not in VALID_SOURCE_TYPES:
+        raise ProtocolError("图片清单来源类型无效")
+    normalized_device = str(uuid.UUID(str(device_id)))
+    normalized_assets: dict[str, dict] = {}
+    for item in assets or []:
+        if not isinstance(item, dict):
+            raise ProtocolError("图片资产条目格式无效")
+        asset_id = validate_digest(str(item.get("assetId") or ""), "图片资产 SHA-256")
+        mime_type = str(item.get("mimeType") or "")
+        if mime_type not in VALID_IMAGE_MIME_TYPES:
+            raise ProtocolError("图片资产 MIME 类型无效")
+        try:
+            size_bytes = int(item.get("sizeBytes") or 0)
+        except (TypeError, ValueError) as error:
+            raise ProtocolError("图片资产大小无效") from error
+        if size_bytes <= 0 or size_bytes > MAX_IMAGE_OBJECT_BYTES:
+            raise ProtocolError("图片资产大小超出允许范围")
+        current = {"assetId": asset_id, "mimeType": mime_type, "sizeBytes": size_bytes}
+        if asset_id in normalized_assets and normalized_assets[asset_id] != current:
+            raise ProtocolError("图片资产同一 SHA-256 的元数据冲突")
+        normalized_assets[asset_id] = current
+
+    normalized_references: dict[str, str] = {}
+    for item in references or []:
+        if not isinstance(item, dict):
+            raise ProtocolError("图片引用条目格式无效")
+        reference_key = str(item.get("referenceKey") or "")
+        if not reference_key or len(reference_key) > 4096 or "\x00" in reference_key:
+            raise ProtocolError("图片 referenceKey 无效")
+        asset_id = validate_digest(str(item.get("assetId") or ""), "图片引用资产 SHA-256")
+        if asset_id not in normalized_assets:
+            raise ProtocolError("图片引用指向不存在的资产")
+        if reference_key in normalized_references and normalized_references[reference_key] != asset_id:
+            raise ProtocolError("同一图片 referenceKey 指向多个资产")
+        normalized_references[reference_key] = asset_id
+
+    assets_list = [normalized_assets[key] for key in sorted(normalized_assets)]
+    references_list = [
+        {"referenceKey": key, "assetId": normalized_references[key]}
+        for key in sorted(normalized_references)
+    ]
+    return {
+        "schemaVersion": 1,
+        "protocol": IMAGE_PROTOCOL,
+        "deviceId": normalized_device,
+        "sourceType": source_type,
+        "assets": assets_list,
+        "references": references_list,
+        "totalObjects": len(assets_list),
+        "totalBytes": sum(int(item["sizeBytes"]) for item in assets_list),
+    }
+
+
+def image_manifest_revision_id(manifest: dict) -> str:
+    core = _image_manifest_core(
+        str(manifest.get("deviceId") or ""),
+        str(manifest.get("sourceType") or ""),
+        manifest.get("assets") or [],
+        manifest.get("references") or [],
+    )
+    return sha256_bytes(canonical_json_bytes(core))
+
+
+def build_image_manifest(device_id: str, source_type: str, local_manifest: dict) -> dict:
+    if not isinstance(local_manifest, dict):
+        raise ProtocolError("本机图片清单格式无效")
+    core = _image_manifest_core(
+        device_id,
+        source_type,
+        local_manifest.get("assets") or [],
+        local_manifest.get("references") or [],
+    )
+    revision = sha256_bytes(canonical_json_bytes(core))
+    result = dict(core)
+    result["imageManifestRevisionId"] = revision
+    result["generatedAt"] = (
+        str(local_manifest.get("generatedAt") or "").strip()
+        or datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    )
+    return result
+
+
+def validate_image_manifest(
+    payload: dict,
+    *,
+    expected_device_id: str = "",
+    expected_source_type: str = "",
+) -> dict:
+    if not isinstance(payload, dict):
+        raise ProtocolError("图片 manifest 不是对象")
+    if int(payload.get("schemaVersion") or 0) != 1 or payload.get("protocol") != IMAGE_PROTOCOL:
+        raise ProtocolError("不支持的图片 manifest 协议")
+    reject_required_features(payload, "图片 manifest")
+    core = _image_manifest_core(
+        str(payload.get("deviceId") or ""),
+        str(payload.get("sourceType") or ""),
+        payload.get("assets") or [],
+        payload.get("references") or [],
+    )
+    if expected_device_id and core["deviceId"] != str(uuid.UUID(str(expected_device_id))):
+        raise ProtocolError("图片 manifest 设备 ID 不匹配")
+    if expected_source_type and core["sourceType"] != expected_source_type:
+        raise ProtocolError("图片 manifest 来源类型不匹配")
+    revision = validate_digest(
+        str(payload.get("imageManifestRevisionId") or ""),
+        "图片 manifest revision",
+    )
+    expected_revision = sha256_bytes(canonical_json_bytes(core))
+    if revision != expected_revision:
+        raise ProtocolError("图片 manifest revision 校验失败")
+    try:
+        total_objects = int(payload["totalObjects"])
+        total_bytes = int(payload["totalBytes"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ProtocolError("图片 manifest 统计字段无效") from error
+    if total_objects != core["totalObjects"]:
+        raise ProtocolError("图片 manifest totalObjects 不一致")
+    if total_bytes != core["totalBytes"]:
+        raise ProtocolError("图片 manifest totalBytes 不一致")
+    result = dict(core)
+    result["imageManifestRevisionId"] = revision
+    result["generatedAt"] = str(payload.get("generatedAt") or "")
+    return result
+
+
+def validate_image_pointer(
+    payload: dict,
+    *,
+    expected_device_id: str = "",
+    expected_source_type: str = "",
+) -> dict:
+    if not isinstance(payload, dict):
+        raise ProtocolError("图片 current.json 不是对象")
+    if int(payload.get("schemaVersion") or 0) != 1 or payload.get("protocol") != IMAGE_PROTOCOL:
+        raise ProtocolError("不支持的图片 current.json 协议")
+    reject_required_features(payload, "图片 current.json")
+    device_id = str(uuid.UUID(str(payload.get("deviceId") or "")))
+    source_type = str(payload.get("sourceType") or "")
+    if source_type not in VALID_SOURCE_TYPES:
+        raise ProtocolError("图片 current.json 来源类型无效")
+    if expected_device_id and device_id != str(uuid.UUID(str(expected_device_id))):
+        raise ProtocolError("图片 current.json 设备 ID 不匹配")
+    if expected_source_type and source_type != expected_source_type:
+        raise ProtocolError("图片 current.json 来源类型不匹配")
+    revision = validate_digest(
+        str(payload.get("imageManifestRevisionId") or ""),
+        "图片 current.json revision",
+    )
+    manifest_path = str(payload.get("manifestPath") or "")
+    if manifest_path != f"manifests/{revision}.json":
+        raise ProtocolError("图片 current.json manifestPath 无效")
+    try:
+        total_objects = int(payload.get("totalObjects") or 0)
+        total_bytes = int(payload.get("totalBytes") or 0)
+    except (TypeError, ValueError) as error:
+        raise ProtocolError("图片 current.json 统计字段无效") from error
+    if total_objects < 0 or total_bytes < 0:
+        raise ProtocolError("图片 current.json 统计字段无效")
+    return {
+        "schemaVersion": 1,
+        "protocol": IMAGE_PROTOCOL,
+        "deviceId": device_id,
+        "sourceType": source_type,
+        "imageManifestRevisionId": revision,
+        "manifestPath": manifest_path,
+        "totalObjects": total_objects,
+        "totalBytes": total_bytes,
+        "updatedAt": str(payload.get("updatedAt") or ""),
+    }
 
 
 def _copy_exact(source: Path, target: Path, length: int, checkpoint: Callable[[], None] | None = None) -> None:

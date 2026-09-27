@@ -23,6 +23,14 @@ param(
 $ErrorActionPreference = "Stop"
 $buildStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $script:MaxLocalImageBytes = 30MB
+$script:ImageAssetRoot = ""
+$script:ImageObjectRoot = ""
+$script:ImageManifestPath = ""
+$script:ImageStatePath = ""
+$script:ImageReferenceSourceId = ""
+$script:ImageManifestAssets = @{}
+$script:ImageManifestReferences = @{}
+$script:ImageManifestDirty = $false
 $script:ToolRawSearchEventCharLimit = 16KB
 $script:ToolRawSearchSessionCharLimit = 256KB
 $script:ToolRawSearchGlobalCharLimit = 128MB
@@ -307,17 +315,245 @@ function Set-ReaderEventImages {
     }
 }
 
-function Get-SupportedImageMimeType {
-    param([AllowNull()][string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
-    switch ([System.IO.Path]::GetExtension($Path).ToLowerInvariant()) {
-        '.png' { return 'image/png' }
-        '.jpg' { return 'image/jpeg' }
-        '.jpeg' { return 'image/jpeg' }
-        '.gif' { return 'image/gif' }
-        '.webp' { return 'image/webp' }
-        '.avif' { return 'image/avif' }
-        default { return "" }
+function Get-Sha256HexFromBytes {
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes) { return "" }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-Sha256HexFromText {
+    param([AllowNull()][string]$Text)
+    return Get-Sha256HexFromBytes ([System.Text.Encoding]::UTF8.GetBytes([string]$Text))
+}
+
+function Get-ImageMimeTypeFromBytes {
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes -or $Bytes.Length -lt 3) { return "" }
+    if (
+        $Bytes.Length -ge 8 -and
+        $Bytes[0] -eq 0x89 -and $Bytes[1] -eq 0x50 -and $Bytes[2] -eq 0x4E -and $Bytes[3] -eq 0x47 -and
+        $Bytes[4] -eq 0x0D -and $Bytes[5] -eq 0x0A -and $Bytes[6] -eq 0x1A -and $Bytes[7] -eq 0x0A
+    ) { return 'image/png' }
+    if ($Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xD8 -and $Bytes[2] -eq 0xFF) { return 'image/jpeg' }
+    if ($Bytes.Length -ge 6) {
+        $gif = [System.Text.Encoding]::ASCII.GetString($Bytes, 0, 6)
+        if ($gif -in @('GIF87a', 'GIF89a')) { return 'image/gif' }
+    }
+    if ($Bytes.Length -ge 12) {
+        $riff = [System.Text.Encoding]::ASCII.GetString($Bytes, 0, 4)
+        $webp = [System.Text.Encoding]::ASCII.GetString($Bytes, 8, 4)
+        if ($riff -eq 'RIFF' -and $webp -eq 'WEBP') { return 'image/webp' }
+    }
+    if ($Bytes.Length -ge 16 -and [System.Text.Encoding]::ASCII.GetString($Bytes, 4, 4) -eq 'ftyp') {
+        $limit = [Math]::Min($Bytes.Length, 64)
+        for ($offset = 8; $offset + 3 -lt $limit; $offset += 4) {
+            $brand = [System.Text.Encoding]::ASCII.GetString($Bytes, $offset, 4)
+            if ($brand -in @('avif', 'avis')) { return 'image/avif' }
+        }
+    }
+    return ""
+}
+
+function Get-ImageCandidateSourceText {
+    param([AllowNull()]$Candidate)
+    if ($null -eq $Candidate) { return "" }
+    if ($Candidate -is [string]) { return ([string]$Candidate).Trim(' ', '"', "'", '<', '>') }
+    return ([string](Get-ObjectPropertyValue $Candidate @('src', 'localPath', 'path', 'url', 'data'))).Trim(' ', '"', "'", '<', '>')
+}
+
+function Get-ImageAssetObjectPath {
+    param([string]$AssetId)
+    if ($AssetId -notmatch '^[0-9a-f]{64}$' -or [string]::IsNullOrWhiteSpace($script:ImageObjectRoot)) { return "" }
+    return Join-Path (Join-Path $script:ImageObjectRoot $AssetId.Substring(0, 2)) ($AssetId + '.bin')
+}
+
+function Initialize-ImageAssetStore {
+    param(
+        [string]$RuntimeDataRoot,
+        [string]$SourceId,
+        [string]$SourceType
+    )
+    $script:ImageAssetRoot = Join-Path $RuntimeDataRoot 'CodexChatIndex.images'
+    $script:ImageObjectRoot = Join-Path $script:ImageAssetRoot 'objects'
+    $manifestRoot = Join-Path $script:ImageAssetRoot 'manifests'
+    $script:ImageManifestPath = Join-Path $manifestRoot ((Get-SafeSourceId $SourceId) + '.json')
+    $script:ImageStatePath = Join-Path $script:ImageAssetRoot 'state.json'
+    $script:ImageReferenceSourceId = if ($SourceType -eq 'webdav-codex') {
+        'local-codex'
+    } elseif ($SourceType -eq 'webdav-claude') {
+        'local-claude'
+    } else {
+        $SourceId
+    }
+    $script:ImageManifestAssets = @{}
+    $script:ImageManifestReferences = @{}
+    $script:ImageManifestDirty = $false
+    New-Item -ItemType Directory -Force $script:ImageObjectRoot | Out-Null
+    New-Item -ItemType Directory -Force $manifestRoot | Out-Null
+
+    if (-not (Test-Path -LiteralPath $script:ImageManifestPath -PathType Leaf)) { return }
+    try {
+        $manifest = Get-Content -LiteralPath $script:ImageManifestPath -Raw | ConvertFrom-Json -Depth 100
+        foreach ($asset in @($manifest.assets)) {
+            $assetId = ([string]$asset.assetId).ToLowerInvariant()
+            if ($assetId -notmatch '^[0-9a-f]{64}$') { continue }
+            $objectPath = Get-ImageAssetObjectPath $assetId
+            if ([string]::IsNullOrWhiteSpace($objectPath) -or -not (Test-Path -LiteralPath $objectPath -PathType Leaf)) { continue }
+            $script:ImageManifestAssets[$assetId] = [ordered]@{
+                assetId = $assetId
+                mimeType = [string]$asset.mimeType
+                sizeBytes = [int64]$asset.sizeBytes
+            }
+        }
+        foreach ($reference in @($manifest.references)) {
+            $referenceKey = [string]$reference.referenceKey
+            $assetId = ([string]$reference.assetId).ToLowerInvariant()
+            if (
+                -not [string]::IsNullOrWhiteSpace($referenceKey) -and
+                $assetId -match '^[0-9a-f]{64}$' -and
+                $script:ImageManifestAssets.ContainsKey($assetId)
+            ) {
+                $script:ImageManifestReferences[$referenceKey] = $assetId
+            }
+        }
+    } catch {
+        $script:ImageManifestAssets = @{}
+        $script:ImageManifestReferences = @{}
+    }
+}
+
+function Save-ImageAssetStore {
+    param(
+        [string]$SourceId,
+        [string]$SourceType
+    )
+    if ([string]::IsNullOrWhiteSpace($script:ImageManifestPath)) { return }
+    $assets = @(
+        $script:ImageManifestAssets.Keys |
+            Sort-Object |
+            ForEach-Object { $script:ImageManifestAssets[$_] }
+    )
+    $references = @(
+        $script:ImageManifestReferences.Keys |
+            Sort-Object |
+            ForEach-Object {
+                [ordered]@{
+                    referenceKey = [string]$_
+                    assetId = [string]$script:ImageManifestReferences[$_]
+                }
+            }
+    )
+    $manifest = [ordered]@{
+        schemaVersion = 1
+        protocol = 'YujiImageSync/v1'
+        sourceId = $SourceId
+        sourceType = $SourceType
+        assets = @($assets)
+        references = @($references)
+        totalObjects = $assets.Count
+        totalBytes = [int64](($assets | Measure-Object -Property sizeBytes -Sum).Sum)
+        generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    Write-Utf8FileAtomic -Path $script:ImageManifestPath -Value ($manifest | ConvertTo-Json -Depth 100)
+
+    $state = [ordered]@{
+        version = 1
+        imageMigrationVersion = 1
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    if (Test-Path -LiteralPath $script:ImageStatePath -PathType Leaf) {
+        try {
+            $oldState = Get-Content -LiteralPath $script:ImageStatePath -Raw | ConvertFrom-Json -AsHashtable -Depth 20
+            if ($oldState -is [System.Collections.IDictionary]) {
+                foreach ($key in $oldState.Keys) {
+                    if (-not $state.Contains($key)) { $state[$key] = $oldState[$key] }
+                }
+            }
+        } catch {}
+    }
+    $migration = if ($state.Contains('migrations') -and $state.migrations -is [System.Collections.IDictionary]) {
+        $state.migrations
+    } else {
+        @{}
+    }
+    $migration[$SourceId] = 1
+    $state.migrations = $migration
+    Write-Utf8FileAtomic -Path $script:ImageStatePath -Value ($state | ConvertTo-Json -Depth 20)
+}
+
+function Get-ImageReferenceKey {
+    param(
+        [string]$SessionId,
+        [AllowNull()]$Event,
+        [int]$UserEventIndex,
+        [int]$ImageIndex,
+        [string]$OriginalReference
+    )
+    $turnId = [string](Get-ObjectPropertyValue $Event @('turnId', 'messageId', 'itemId'))
+    $eventIdentity = if ([string]::IsNullOrWhiteSpace($turnId)) { 'user-' + $UserEventIndex } else { $turnId }
+    $normalizedReference = ([string]$OriginalReference).Trim().Replace('\', '/')
+    $originHash = Get-Sha256HexFromText $normalizedReference
+    return Get-Sha256HexFromText ((@(
+        [string]$script:ImageReferenceSourceId,
+        [string]$SessionId,
+        [string]$eventIdentity,
+        [string]$ImageIndex,
+        [string]$originHash
+    )) -join '|')
+}
+
+function Read-UrlImageBytes {
+    param([string]$Url)
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $true
+    $handler.MaxAutomaticRedirections = 5
+    $handler.UseCookies = $false
+    $handler.UseDefaultCredentials = $false
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(15)
+    $response = $null
+    $stream = $null
+    $memory = $null
+    try {
+        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $Url)
+        try {
+            $response = $client.SendAsync(
+                $request,
+                [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+            ).GetAwaiter().GetResult()
+        } finally {
+            $request.Dispose()
+        }
+        if (-not $response.IsSuccessStatusCode) {
+            throw "HTTP $([int]$response.StatusCode)"
+        }
+        if (
+            $response.Content.Headers.ContentLength.HasValue -and
+            [int64]$response.Content.Headers.ContentLength.Value -gt [int64]$script:MaxLocalImageBytes
+        ) {
+            throw 'too-large'
+        }
+        $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $memory = [System.IO.MemoryStream]::new()
+        $buffer = [byte[]]::new(64KB)
+        while ($true) {
+            $read = $stream.Read($buffer, 0, $buffer.Length)
+            if ($read -le 0) { break }
+            if ($memory.Length + $read -gt [int64]$script:MaxLocalImageBytes) { throw 'too-large' }
+            $memory.Write($buffer, 0, $read)
+        }
+        return $memory.ToArray()
+    } finally {
+        if ($memory) { $memory.Dispose() }
+        if ($stream) { $stream.Dispose() }
+        if ($response) { $response.Dispose() }
+        $client.Dispose()
+        $handler.Dispose()
     }
 }
 
@@ -377,16 +613,11 @@ function Resolve-ImageCandidate {
         [AllowNull()][string]$Cwd
     )
     if ($null -eq $Candidate) { return $null }
-    $value = if ($Candidate -is [string]) {
-        [string]$Candidate
-    } else {
-        [string](Get-ObjectPropertyValue $Candidate @('src', 'localPath', 'path', 'url', 'data'))
-    }
-    $value = $value.Trim(' ', '"', "'", '<', '>')
+    $value = Get-ImageCandidateSourceText $Candidate
     if ([string]::IsNullOrWhiteSpace($value)) { return $null }
 
     if ($value -match '^data:(?<mime>image/(?:png|jpeg|gif|webp|avif));base64,(?<data>.+)$') {
-        return [ordered]@{ src = $value; type = 'data'; mimeType = $Matches['mime'].ToLowerInvariant() }
+        return [ordered]@{ src = $value; type = 'data' }
     }
     if ($value -match '^data:image/') { return $null }
 
@@ -416,15 +647,15 @@ function Resolve-ImageCandidate {
     } catch {
         return $null
     }
-    $mimeType = Get-SupportedImageMimeType $path
-    if ([string]::IsNullOrWhiteSpace($mimeType) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return [ordered]@{ src = $value; type = 'local'; localPath = $path; status = 'unavailable' }
+    }
     $file = Get-Item -LiteralPath $path
     $resolved = [ordered]@{
-        imageId = Get-DetailShardSuffix $file.FullName
+        src = $value
         type = 'local'
         localPath = $file.FullName
         name = $file.Name
-        mimeType = $mimeType
         sizeBytes = [int64]$file.Length
     }
     if ([int64]$file.Length -gt [int64]$script:MaxLocalImageBytes) {
@@ -433,13 +664,126 @@ function Resolve-ImageCandidate {
     return $resolved
 }
 
+function Get-ManagedImageFromReferenceKey {
+    param([string]$ReferenceKey)
+    if (
+        [string]::IsNullOrWhiteSpace($ReferenceKey) -or
+        -not $script:ImageManifestReferences.ContainsKey($ReferenceKey)
+    ) {
+        return $null
+    }
+    $assetId = [string]$script:ImageManifestReferences[$ReferenceKey]
+    if (-not $script:ImageManifestAssets.ContainsKey($assetId)) { return $null }
+    $asset = $script:ImageManifestAssets[$assetId]
+    $objectPath = Get-ImageAssetObjectPath $assetId
+    if ([string]::IsNullOrWhiteSpace($objectPath) -or -not (Test-Path -LiteralPath $objectPath -PathType Leaf)) {
+        return $null
+    }
+    return [ordered]@{
+        type = 'managed'
+        assetId = $assetId
+        mimeType = [string]$asset.mimeType
+        sizeBytes = [int64]$asset.sizeBytes
+    }
+}
+
+function Convert-ToManagedImage {
+    param(
+        [AllowNull()]$Resolved,
+        [string]$ReferenceKey
+    )
+    if ($null -eq $Resolved -or [string]::IsNullOrWhiteSpace($ReferenceKey)) { return $Resolved }
+    $existingManaged = Get-ManagedImageFromReferenceKey -ReferenceKey $ReferenceKey
+    if ($null -ne $existingManaged) { return $existingManaged }
+
+    $bytes = $null
+    try {
+        $resolvedType = [string]$Resolved.type
+        if ($resolvedType -eq 'data') {
+            $source = [string]$Resolved.src
+            if ($source -notmatch '^data:image/(?:png|jpeg|gif|webp|avif);base64,(?<data>.+)$') {
+                throw 'unsupported'
+            }
+            $bytes = [Convert]::FromBase64String([string]$Matches['data'])
+        } elseif ($resolvedType -eq 'url') {
+            $bytes = Read-UrlImageBytes -Url ([string]$Resolved.src)
+        } elseif ($resolvedType -eq 'local') {
+            $localPath = [string]$Resolved.localPath
+            if ([string]::IsNullOrWhiteSpace($localPath) -or -not (Test-Path -LiteralPath $localPath -PathType Leaf)) {
+                throw 'unavailable'
+            }
+            $file = Get-Item -LiteralPath $localPath
+            if ([int64]$file.Length -gt [int64]$script:MaxLocalImageBytes) { throw 'too-large' }
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+        } else {
+            throw 'unsupported'
+        }
+        if ($null -eq $bytes -or $bytes.Length -le 0) { throw 'empty' }
+        if ([int64]$bytes.Length -gt [int64]$script:MaxLocalImageBytes) { throw 'too-large' }
+        $mimeType = Get-ImageMimeTypeFromBytes $bytes
+        if ([string]::IsNullOrWhiteSpace($mimeType)) { throw 'unsupported' }
+        $assetId = Get-Sha256HexFromBytes $bytes
+        $objectPath = Get-ImageAssetObjectPath $assetId
+        $objectDir = Split-Path -Parent $objectPath
+        New-Item -ItemType Directory -Force $objectDir | Out-Null
+        if (-not (Test-Path -LiteralPath $objectPath -PathType Leaf)) {
+            $temporary = Join-Path $objectDir ('.' + $assetId + '.' + [Guid]::NewGuid().ToString('N') + '.tmp')
+            try {
+                [System.IO.File]::WriteAllBytes($temporary, $bytes)
+                try {
+                    [System.IO.File]::Move($temporary, $objectPath)
+                } catch {
+                    if (-not (Test-Path -LiteralPath $objectPath -PathType Leaf)) { throw }
+                }
+            } finally {
+                Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $script:ImageManifestAssets[$assetId] = [ordered]@{
+            assetId = $assetId
+            mimeType = $mimeType
+            sizeBytes = [int64]$bytes.Length
+        }
+        $script:ImageManifestReferences[$ReferenceKey] = $assetId
+        $script:ImageManifestDirty = $true
+        return [ordered]@{
+            type = 'managed'
+            assetId = $assetId
+            mimeType = $mimeType
+            sizeBytes = [int64]$bytes.Length
+        }
+    } catch {
+        $failureStatus = if ([string]$_.Exception.Message -eq 'too-large') {
+            'too-large'
+        } elseif ([string]$_.Exception.Message -eq 'unsupported') {
+            'unsupported'
+        } else {
+            'unavailable'
+        }
+        $fallback = [ordered]@{
+            type = [string]$Resolved.type
+            status = $failureStatus
+        }
+        if ([string]$Resolved.type -eq 'local') {
+            $fallback.localPath = [string]$Resolved.localPath
+            $fallback.src = [string]$Resolved.src
+        } elseif ([string]$Resolved.type -eq 'url') {
+            $fallback.src = [string]$Resolved.src
+        }
+        return $fallback
+    }
+}
+
 function Add-ResolvedUserEventImages {
     param(
         [AllowNull()]$Events,
-        [AllowNull()][string]$Cwd
+        [AllowNull()][string]$Cwd,
+        [AllowNull()][string]$SessionId
     )
+    $userEventIndex = 0
     foreach ($event in @($Events)) {
         if ($null -eq $event -or [string](Get-ObjectPropertyValue $event @('kind')) -ne 'user') { continue }
+        $userEventIndex++
         $candidates = [System.Collections.Generic.List[object]]::new()
         foreach ($candidate in @(Get-ReaderEventImages $event)) { [void]$candidates.Add($candidate) }
         $rawText = [string](Get-ObjectPropertyValue $event @('rawText', 'summary'))
@@ -447,13 +791,24 @@ function Add-ResolvedUserEventImages {
 
         $resolvedImages = [System.Collections.Generic.List[object]]::new()
         $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $imageIndex = 0
         foreach ($candidate in $candidates) {
+            $originalReference = Get-ImageCandidateSourceText $candidate
+            if ([string]::IsNullOrWhiteSpace($originalReference)) { continue }
+            $imageIndex++
+            $referenceKey = Get-ImageReferenceKey -SessionId $SessionId -Event $event -UserEventIndex $userEventIndex -ImageIndex $imageIndex -OriginalReference $originalReference
+            $existingManaged = Get-ManagedImageFromReferenceKey -ReferenceKey $referenceKey
+            if ($null -ne $existingManaged) {
+                $dedupeKey = 'managed-reference:' + $originalReference
+                if ($seen.Add($dedupeKey)) { [void]$resolvedImages.Add($existingManaged) }
+                continue
+            }
             $resolved = Resolve-ImageCandidate -Candidate $candidate -Cwd $Cwd
             if ($null -eq $resolved) { continue }
             $dedupeValue = if ([string]$resolved.type -eq 'local') { [string]$resolved.localPath } else { [string]$resolved.src }
             $dedupeKey = [string]$resolved.type + ':' + $dedupeValue
             if ([string]::IsNullOrWhiteSpace($dedupeValue) -or -not $seen.Add($dedupeKey)) { continue }
-            [void]$resolvedImages.Add($resolved)
+            [void]$resolvedImages.Add((Convert-ToManagedImage -Resolved $resolved -ReferenceKey $referenceKey))
         }
         Set-ReaderEventImages -Event $event -Images @($resolvedImages)
     }
@@ -1998,7 +2353,7 @@ function New-ClaudeSessionFromJsonEntry {
         $title = if ($MetadataSource) { $MetadataSource } else { $sessionId }
     }
 
-    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd -SessionId $sessionId
     $hasImageReference = @($events | Where-Object { $_.kind -eq 'user' -and (Test-ReaderEventHasImages $_) }).Count -gt 0
 
     $metadata = @{}
@@ -2109,7 +2464,7 @@ function Read-ClaudeCodeChatConversation {
         $endTime = $File.LastWriteTimeUtc.ToString("o")
     }
 
-    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd -SessionId $sessionId
     $hasImageReference = @($events | Where-Object { $_.kind -eq 'user' -and (Test-ReaderEventHasImages $_) }).Count -gt 0
 
     [pscustomobject]@{
@@ -2389,7 +2744,7 @@ function Read-ClaudeSession {
         return $null
     }
 
-    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd -SessionId $id
     $userEvents = @($events | Where-Object { $_.kind -eq 'user' })
     $assistantEvents = @($events | Where-Object { $_.kind -in @('assistant_commentary','assistant_final') })
     if ([string]::IsNullOrWhiteSpace($firstUserMessage) -and $userEvents.Count -gt 0) {
@@ -2663,7 +3018,7 @@ function Read-CodexSessionV030Fallback {
         return $null
     }
 
-    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd -SessionId $id
     $userEvents = @($events | Where-Object { $_.kind -eq 'user' })
     $assistantEvents = @($events | Where-Object { $_.kind -in @('assistant_commentary','assistant_final') })
     if ($userEvents.Count -eq 0 -and $assistantEvents.Count -eq 0) {
@@ -3310,7 +3665,7 @@ function Read-CodexSession {
 
     if ([string]::IsNullOrWhiteSpace($createdAt)) { $createdAt = $File.CreationTimeUtc.ToString('o') }
     if ($null -eq (ConvertTo-CodexDateTimeOffset $updatedAt)) { $updatedAt = $File.LastWriteTimeUtc.ToString('o') }
-    Add-ResolvedUserEventImages -Events $events -Cwd $cwd
+    Add-ResolvedUserEventImages -Events $events -Cwd $cwd -SessionId $id
     $userEvents = @($events | Where-Object kind -eq 'user')
     $assistantEvents = @($events | Where-Object kind -in @('assistant_commentary', 'assistant_final'))
     if ($userEvents.Count -eq 0 -and $assistantEvents.Count -eq 0) { return New-SkippedReaderSession 'empty-after-context-filter' }
@@ -3464,7 +3819,7 @@ $otherSearchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) 
 } else {
     Join-Path $effectiveDataRoot 'CodexChatIndex.search.other.json'
 }
-$builderVersion = "V0.31"
+$builderVersion = "V0.32"
 $parserRevision = 3
 $templatePath = Join-Path $PSScriptRoot 'templates\CodexChatIndex.template.html'
 $indexRelativePath = Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $dataOutput
@@ -3709,6 +4064,7 @@ New-Item -ItemType Directory -Force $outputDir | Out-Null
 New-Item -ItemType Directory -Force $resolvedDataRoot | Out-Null
 New-Item -ItemType Directory -Force $effectiveDataRoot | Out-Null
 New-Item -ItemType Directory -Force $detailRoot | Out-Null
+Initialize-ImageAssetStore -RuntimeDataRoot $resolvedDataRoot -SourceId $SourceId -SourceType $SourceType
 if (-not $outputPathWasProvided) {
     $sharedRoot = Split-Path -Parent $PSScriptRoot
     New-Item -ItemType Directory -Force (Join-Path $sharedRoot '外部聊天记录') | Out-Null
@@ -4093,6 +4449,7 @@ Write-Utf8FileAtomic -Path $dataOutput -Value ($appData | ConvertTo-Json -Depth 
 Write-Utf8FileAtomic -Path $searchOutput -Value ($searchPayload | ConvertTo-Json -Depth 100)
 Write-Utf8FileAtomic -Path $otherSearchOutput -Value ($otherSearchPayload | ConvertTo-Json -Depth 100)
 Write-Utf8FileAtomic -Path $cacheOutput -Value ($cachePayload | ConvertTo-Json -Depth 100)
+Save-ImageAssetStore -SourceId $SourceId -SourceType $SourceType
 
 $buildStopwatch.Stop()
 

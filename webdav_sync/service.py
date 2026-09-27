@@ -33,13 +33,16 @@ from .config import (
     write_json_atomic,
 )
 from .protocol import (
+    IMAGE_PROTOCOL,
     PROTOCOL,
     ProtocolError,
     SnapshotResult,
+    build_image_manifest,
     build_notes_document,
     canonical_json_bytes,
     create_full_manifest,
     create_snapshot,
+    image_manifest_revision_id,
     manifest_revision_id,
     materialize_snapshot,
     referenced_object_digests,
@@ -49,6 +52,8 @@ from .protocol import (
     validate_current_pointer,
     validate_digest,
     validate_full_manifest,
+    validate_image_manifest,
+    validate_image_pointer,
 )
 from .tasks import TaskBusyError, TaskCancelled, TaskContext, TaskManager
 
@@ -89,6 +94,8 @@ REMOTE_SOURCE_PATTERN = re.compile(
     r"^webdav-([0-9a-f-]{36})-([0-9a-f-]{36})-(local-codex|local-claude)$",
     re.IGNORECASE,
 )
+IMAGE_MANIFEST_JSON_LIMIT = 64 * 1024 * 1024
+IMAGE_POINTER_JSON_LIMIT = 256 * 1024
 
 
 LOCAL_CAPABILITIES = {
@@ -250,6 +257,8 @@ class WebDAVSyncService:
         self._lock = threading.RLock()
         self._status_cache: dict[str, tuple[float, dict]] = {}
         self._pointer_cache: OrderedDict[tuple[str, str, str], tuple[str, dict]] = OrderedDict()
+        self._image_sync_thread: threading.Thread | None = None
+        self._image_sync_source = ""
         self.recovery_error = ""
         self.recovery_warning = ""
         self._recover_local_transactions()
@@ -1515,6 +1524,16 @@ class WebDAVSyncService:
         current = self.task_state()
         if current.get("status") in {"running", "cancelling"}:
             raise TaskBusyError(current)
+        if self._image_sync_thread is not None and self._image_sync_thread.is_alive():
+            raise TaskBusyError(
+                {
+                    "taskId": "image-sidecar",
+                    "action": "image-upload",
+                    "sourceId": self._image_sync_source,
+                    "stage": "同步图片",
+                    "status": "running",
+                }
+            )
 
     def invalidate_source_status(self, source_id: str) -> None:
         with self._lock:
@@ -2174,6 +2193,416 @@ class WebDAVSyncService:
                 raise ProtocolError(f"当前指针与完整 manifest 的 {key} 不一致")
         return pointer, etag, manifest, manifest_bytes
 
+    @staticmethod
+    def _safe_image_source_id(source_id: str) -> str:
+        return re.sub(r"[^A-Za-z0-9._-]+", "-", str(source_id or "")).strip("-") or "local-codex"
+
+    def _local_image_root(self) -> Path:
+        return self.runtime_root / "CodexChatIndex.images"
+
+    def _local_image_manifest_path(self, source_id: str) -> Path:
+        return self._local_image_root() / "manifests" / f"{self._safe_image_source_id(source_id)}.json"
+
+    def _local_image_object_path(self, asset_id: str) -> Path:
+        digest = validate_digest(str(asset_id or ""), "图片资产 SHA-256")
+        return self._local_image_root() / "objects" / digest[:2] / f"{digest}.bin"
+
+    def _load_local_image_manifest(self, source_id: str) -> dict:
+        path = self._local_image_manifest_path(source_id)
+        if not path.is_file() or path.is_symlink():
+            return {
+                "schemaVersion": 1,
+                "protocol": IMAGE_PROTOCOL,
+                "sourceId": source_id,
+                "sourceType": source_id,
+                "assets": [],
+                "references": [],
+                "totalObjects": 0,
+                "totalBytes": 0,
+                "generatedAt": "",
+            }
+        try:
+            if path.stat().st_size > IMAGE_MANIFEST_JSON_LIMIT:
+                raise ProtocolError("本机图片清单超过大小上限")
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ProtocolError("本机图片清单无法读取") from error
+        if not isinstance(payload, dict):
+            raise ProtocolError("本机图片清单格式无效")
+        return payload
+
+    def _image_remote_base(self, settings: dict, device_id: str, source_type: str) -> str:
+        return self._join(self._source_base(settings, device_id, source_type), "images")
+
+    def _ensure_image_layout(self, client: object, settings: dict, device_id: str, source_type: str) -> str:
+        self._ensure_source_layout(client, settings, device_id, source_type)
+        base = self._image_remote_base(settings, device_id, source_type)
+        client.mkcol(base, allow_exists=True)
+        for child in ("manifests", "objects", "staging"):
+            client.mkcol(self._join(base, child), allow_exists=True)
+        return base
+
+    def _read_image_sidecar(
+        self,
+        client: object,
+        settings: dict,
+        device_id: str,
+        source_type: str,
+    ) -> tuple[dict | None, str, dict | None]:
+        base = self._image_remote_base(settings, device_id, source_type)
+        pointer_bytes, etag = client.get_optional(
+            self._join(base, "current.json"),
+            max_bytes=IMAGE_POINTER_JSON_LIMIT,
+        )
+        if pointer_bytes is None:
+            return None, "", None
+        try:
+            pointer_raw = json.loads(pointer_bytes.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as error:
+            raise ProtocolError("图片 current.json 无效") from error
+        pointer = validate_image_pointer(
+            pointer_raw,
+            expected_device_id=device_id,
+            expected_source_type=source_type,
+        )
+        manifest_bytes, _ = client.get_bytes(
+            self._join(base, pointer["manifestPath"]),
+            max_bytes=IMAGE_MANIFEST_JSON_LIMIT,
+        )
+        try:
+            manifest_raw = json.loads(manifest_bytes.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as error:
+            raise ProtocolError("图片 manifest JSON 无效") from error
+        manifest = validate_image_manifest(
+            manifest_raw,
+            expected_device_id=device_id,
+            expected_source_type=source_type,
+        )
+        if manifest["imageManifestRevisionId"] != pointer["imageManifestRevisionId"]:
+            raise ProtocolError("图片 current.json 与 manifest revision 不一致")
+        for key in ("totalObjects", "totalBytes"):
+            if int(pointer.get(key) or 0) != int(manifest.get(key) or 0):
+                raise ProtocolError(f"图片 current.json 与 manifest 的 {key} 不一致")
+        return pointer, etag, manifest
+
+    @staticmethod
+    def _remote_image_object_sizes(client: object, base: str, manifest: dict) -> dict[str, int]:
+        sizes: dict[str, int] = {}
+        prefixes = sorted({str(item.get("assetId") or "")[:2] for item in manifest.get("assets") or [] if isinstance(item, dict)})
+        for prefix in prefixes:
+            if len(prefix) != 2:
+                continue
+            try:
+                rows = client.propfind(WebDAVSyncService._join(base, "objects", prefix), depth=1)
+            except WebDAVError as error:
+                if error.status == 404:
+                    continue
+                raise
+            for row in rows:
+                if row.get("isCollection"):
+                    continue
+                path = unquote(urlsplit(str(row.get("href") or "")).path).rstrip("/")
+                leaf = path.rsplit("/", 1)[-1]
+                if not leaf.endswith(".bin"):
+                    continue
+                digest = leaf[:-4].casefold()
+                if len(digest) == 64 and all(character in "0123456789abcdef" for character in digest):
+                    sizes[digest] = int(row.get("size") or 0)
+        return sizes
+
+    def _remember_image_sync(
+        self,
+        settings: dict,
+        source_type: str,
+        *,
+        pending: bool,
+        revision: str = "",
+        error: str = "",
+    ) -> None:
+        def update(connection: dict) -> None:
+            image_sync = connection.setdefault("imageSync", {})
+            image_sync[source_type] = {
+                "pending": bool(pending),
+                "imageManifestRevisionId": str(revision or ""),
+                "lastError": TaskManager._sanitize_error(error)[:2048],
+                "updatedAt": utc_now(),
+            }
+
+        self._update_connection_state(settings, update)
+
+    def _sync_image_sidecar(
+        self,
+        settings: dict,
+        source_type: str,
+        *,
+        client: object | None = None,
+        verify_remote_objects: bool = False,
+    ) -> str:
+        if source_type not in LOCAL_SOURCE_TYPES:
+            raise ValueError("图片 sidecar 只支持本机来源")
+        client = client or self._client(settings)
+        device_id = str(self.device["deviceId"])
+        local_manifest = self._load_local_image_manifest(source_type)
+        manifest = build_image_manifest(device_id, source_type, local_manifest)
+        revision = str(manifest["imageManifestRevisionId"])
+        base = self._ensure_image_layout(client, settings, device_id, source_type)
+        old_pointer, _old_etag, old_manifest = self._read_image_sidecar(
+            client, settings, device_id, source_type
+        )
+        remote_sizes: dict[str, int] = {}
+        if verify_remote_objects and old_manifest:
+            remote_sizes = self._remote_image_object_sizes(client, base, old_manifest)
+        remote_complete = bool(old_manifest) and all(
+            remote_sizes.get(str(item.get("assetId") or "")) == int(item.get("sizeBytes") or 0)
+            for item in old_manifest.get("assets") or []
+            if isinstance(item, dict)
+        )
+        if old_pointer and old_pointer.get("imageManifestRevisionId") == revision and (not verify_remote_objects or remote_complete):
+            self._remember_image_sync(settings, source_type, pending=False, revision=revision)
+            return revision
+
+        if verify_remote_objects:
+            old_assets = {
+                str(item.get("assetId") or "")
+                for item in (old_manifest or {}).get("assets") or []
+                if isinstance(item, dict)
+                and remote_sizes.get(str(item.get("assetId") or "")) == int(item.get("sizeBytes") or 0)
+            }
+        else:
+            old_assets = {
+                str(item.get("assetId") or "")
+                for item in (old_manifest or {}).get("assets") or []
+                if isinstance(item, dict)
+            }
+        staging = self._connection_root(settings) / "image-sync"
+        staging.mkdir(parents=True, exist_ok=True)
+        try:
+            created_prefixes: set[str] = set()
+            for asset in manifest["assets"]:
+                digest = str(asset["assetId"])
+                local_path = self._local_image_object_path(digest)
+                if (
+                    not local_path.is_file()
+                    or local_path.is_symlink()
+                    or local_path.stat().st_size != int(asset["sizeBytes"])
+                    or sha256_file(local_path) != digest
+                ):
+                    raise ProtocolError(f"本机图片对象校验失败：{digest}")
+                if digest in old_assets:
+                    continue
+                prefix = digest[:2]
+                if prefix not in created_prefixes:
+                    client.mkcol(self._join(base, "objects", prefix), allow_exists=True)
+                    created_prefixes.add(prefix)
+                try:
+                    client.put_file(
+                        self._join(base, "objects", prefix, f"{digest}.bin"),
+                        local_path,
+                        if_none_match="*",
+                    )
+                except WebDAVError as error:
+                    if error.status != 412:
+                        raise
+                    verification = staging / f"verify-{digest}.bin"
+                    try:
+                        client.download(
+                            self._join(base, "objects", prefix, f"{digest}.bin"),
+                            verification,
+                            max_bytes=int(asset["sizeBytes"]),
+                        )
+                        if (
+                            verification.stat().st_size != int(asset["sizeBytes"])
+                            or sha256_file(verification) != digest
+                        ):
+                            raise ProtocolError(f"云端同名图片对象内容冲突：{digest}") from error
+                    finally:
+                        verification.unlink(missing_ok=True)
+
+            manifest_bytes = canonical_json_bytes(manifest)
+            manifest_path = self._join(base, "manifests", f"{revision}.json")
+            try:
+                client.put_bytes(
+                    manifest_path,
+                    manifest_bytes,
+                    if_none_match="*",
+                    content_type="application/json",
+                )
+            except WebDAVError as error:
+                if error.status != 412:
+                    raise
+                existing, _ = client.get_bytes(
+                    manifest_path,
+                    max_bytes=max(len(manifest_bytes), 1),
+                )
+                if existing != manifest_bytes:
+                    raise ProtocolError("云端同名图片 manifest 内容冲突") from error
+
+            pointer = {
+                "schemaVersion": 1,
+                "protocol": IMAGE_PROTOCOL,
+                "deviceId": device_id,
+                "sourceType": source_type,
+                "imageManifestRevisionId": revision,
+                "manifestPath": f"manifests/{revision}.json",
+                "totalObjects": int(manifest["totalObjects"]),
+                "totalBytes": int(manifest["totalBytes"]),
+                "updatedAt": utc_now(),
+            }
+            client.put_bytes(
+                self._join(base, "current.json"),
+                canonical_json_bytes(pointer),
+                content_type="application/json",
+            )
+            self._remember_image_sync(settings, source_type, pending=False, revision=revision)
+            return revision
+        finally:
+            try:
+                shutil.rmtree(staging)
+            except OSError:
+                pass
+
+    def _current_local_image_revision(self, source_type: str) -> str:
+        manifest = build_image_manifest(
+            str(self.device["deviceId"]),
+            source_type,
+            self._load_local_image_manifest(source_type),
+        )
+        return str(manifest["imageManifestRevisionId"])
+
+    def schedule_image_sync(self, source_type: str) -> dict:
+        if source_type not in LOCAL_SOURCE_TYPES:
+            return {"scheduled": False, "pending": False, "reason": "unsupported"}
+        with self._lock:
+            try:
+                settings = self._settings(require_enabled=True)
+            except ConfigError:
+                return {"scheduled": False, "pending": False, "reason": "disabled"}
+            current = self.task_state()
+            if current.get("status") in {"running", "cancelling"}:
+                self._remember_image_sync(settings, source_type, pending=True, error="WebDAV busy")
+                return {"scheduled": False, "pending": True, "reason": "busy"}
+            if self._image_sync_thread is not None and self._image_sync_thread.is_alive():
+                self._remember_image_sync(settings, source_type, pending=True, error="image sync busy")
+                return {"scheduled": False, "pending": True, "reason": "busy"}
+            self._remember_image_sync(settings, source_type, pending=True)
+            self._image_sync_source = source_type
+
+            def worker() -> None:
+                try:
+                    while True:
+                        revision = self._sync_image_sidecar(settings, source_type)
+                        if revision == self._current_local_image_revision(source_type):
+                            break
+                    self._remember_image_sync(
+                        settings, source_type, pending=False, revision=revision
+                    )
+                except Exception as error:
+                    try:
+                        self._remember_image_sync(
+                            settings,
+                            source_type,
+                            pending=True,
+                            error=str(error),
+                        )
+                    except Exception:
+                        pass
+                finally:
+                    with self._lock:
+                        self._image_sync_thread = None
+                        self._image_sync_source = ""
+
+            thread = threading.Thread(
+                target=worker,
+                name=f"YujiImageSync-{source_type}",
+                daemon=True,
+            )
+            self._image_sync_thread = thread
+            thread.start()
+            return {"scheduled": True, "pending": True, "reason": ""}
+
+    def _download_image_sidecar(
+        self,
+        context: TaskContext,
+        client: object,
+        settings: dict,
+        source_id: str,
+        device_id: str,
+        source_type: str,
+        staging: Path,
+    ) -> bool:
+        previous_revision = ""
+        previous_manifest_path = self._local_image_manifest_path(source_id)
+        if previous_manifest_path.is_file() and not previous_manifest_path.is_symlink():
+            try:
+                previous_payload = json.loads(previous_manifest_path.read_text(encoding="utf-8-sig"))
+                if isinstance(previous_payload, dict):
+                    previous_revision = str(previous_payload.get("imageManifestRevisionId") or "")
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                previous_revision = ""
+        pointer, _etag, manifest = self._read_image_sidecar(
+            client, settings, device_id, source_type
+        )
+        if pointer is None or manifest is None:
+            return False
+        local_root = self._local_image_root()
+        for asset in manifest["assets"]:
+            self._webdav_checkpoint(context)
+            digest = str(asset["assetId"])
+            size_bytes = int(asset["sizeBytes"])
+            target = self._local_image_object_path(digest)
+            reusable = False
+            try:
+                reusable = (
+                    target.is_file()
+                    and not target.is_symlink()
+                    and target.stat().st_size == size_bytes
+                    and sha256_file(target) == digest
+                )
+            except OSError:
+                reusable = False
+            if reusable:
+                continue
+            download_target = staging / "images" / "objects" / digest[:2] / f"{digest}.bin"
+            client.download(
+                self._join(
+                    self._image_remote_base(settings, device_id, source_type),
+                    "objects",
+                    digest[:2],
+                    f"{digest}.bin",
+                ),
+                download_target,
+                max_bytes=size_bytes,
+            )
+            if (
+                download_target.stat().st_size != size_bytes
+                or sha256_file(download_target) != digest
+            ):
+                raise ProtocolError(f"云端图片对象校验失败：{digest}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                try:
+                    os.replace(download_target, target)
+                except OSError:
+                    if not target.exists():
+                        raise
+
+        local_payload = {
+            "schemaVersion": 1,
+            "protocol": IMAGE_PROTOCOL,
+            "sourceId": source_id,
+            "sourceType": REMOTE_TYPE_MAP[source_type],
+            "imageManifestRevisionId": pointer["imageManifestRevisionId"],
+            "assets": list(manifest["assets"]),
+            "references": list(manifest["references"]),
+            "totalObjects": int(manifest["totalObjects"]),
+            "totalBytes": int(manifest["totalBytes"]),
+            "generatedAt": str(manifest.get("generatedAt") or ""),
+        }
+        manifest_path = self._local_image_manifest_path(source_id)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(manifest_path, local_payload)
+        return previous_revision != str(pointer["imageManifestRevisionId"])
+
     def _export_inventory(self, source_type: str, inventory_path: Path) -> dict:
         command = [
             "pwsh",
@@ -2378,6 +2807,7 @@ class WebDAVSyncService:
     def start_upload(self, source_id: str, confirmation_token: str = "") -> dict:
         with self._lock:
             self._require_recovery_ready()
+            self._require_idle_task()
             if source_id not in LOCAL_SOURCE_TYPES:
                 raise ValueError("只有本机 Codex 或本机 Claude 可以上传")
             settings = self._settings(require_enabled=True)
@@ -2415,6 +2845,8 @@ class WebDAVSyncService:
         remote_lock: dict | None = None
         pointer_committed = False
         try:
+            context.update(stage="同步图片")
+            self._sync_image_sidecar(settings, source_type, client=client, verify_remote_objects=True)
             context.update(stage="扫描")
             inventory_path = staging / "inventory.json"
             inventory = self._inventory_provider(source_type, inventory_path)
@@ -2877,6 +3309,7 @@ class WebDAVSyncService:
     def start_download(self, source_id: str) -> dict:
         with self._lock:
             self._require_recovery_ready()
+            self._require_idle_task()
             settings = self._settings(require_enabled=True)
             connection_id, _device_id, _source_type = parse_remote_source_id(source_id)
             if connection_id != settings["connectionId"]:
@@ -2914,8 +3347,24 @@ class WebDAVSyncService:
             if len(notes_bytes) != int(manifest["notes"]["size"]) or sha256_bytes(notes_bytes) != manifest["notes"]["sha256"]:
                 raise ProtocolError("云端备注对象校验失败")
             notes_document = self._parse_notes(notes_bytes, device_id, source_type)
+            context.update(stage="同步图片")
+            image_changed = self._download_image_sidecar(
+                context,
+                client,
+                settings,
+                source_id,
+                device_id,
+                source_type,
+                task_staging,
+            )
             index_root = self._index_root(source_id)
-            if not chat_changed and notes_changed and index_root.is_dir() and not index_root.is_symlink():
+            if (
+                not chat_changed
+                and not image_changed
+                and notes_changed
+                and index_root.is_dir()
+                and not index_root.is_symlink()
+            ):
                 metadata_staging = task_staging / "cache-metadata-commit"
                 try:
                     self._stage_notes_cache_update(
@@ -2939,7 +3388,12 @@ class WebDAVSyncService:
                         pointer=pointer,
                     )
                     return
-            if not chat_changed and not notes_changed and self._index_root(source_id).is_dir():
+            if (
+                not chat_changed
+                and not image_changed
+                and not notes_changed
+                and self._index_root(source_id).is_dir()
+            ):
                 return
 
             object_digests = sorted(referenced_object_digests(manifest))

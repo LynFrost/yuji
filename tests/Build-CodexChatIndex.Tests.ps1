@@ -1,4 +1,4 @@
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+﻿$here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $here
 $buildScript = Join-Path $projectRoot 'Build-CodexChatIndex.ps1'
 $serverScript = Join-Path $projectRoot 'CodexChatIndexServer.py'
@@ -106,9 +106,9 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $html | Should Not Match '<script id="app-data" type="application/json">'
     }
 
-    It 'renders the streamlined V0.31 Yuji brand without renaming internal files' {
+    It 'renders the streamlined V0.32 Yuji brand without renaming internal files' {
         $html | Should Match '<title>语迹</title>'
-        $html | Should Match '<h1>语迹 <span class="version-badge">V0\.31</span></h1>'
+        $html | Should Match '<h1>语迹 <span class="version-badge">V0\.32</span></h1>'
         $html | Should Not Match 'app-subtitle'
         $html | Should Not Match '>AI 对话记录浏览器<'
         (Get-Content -LiteralPath (Join-Path $projectRoot 'README.md') -Raw) | Should Match 'AI 对话记录浏览器'
@@ -117,11 +117,11 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         (Test-Path -LiteralPath $buildScript -PathType Leaf) | Should Be $true
     }
 
-    It 'uses V0.31 builder and visible version markers' {
+    It 'uses V0.32 builder and visible version markers' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
 
-        $html | Should Match '<span class="version-badge">V0\.31</span>'
-        $buildSource | Should Match '\$builderVersion = "V0\.31"'
+        $html | Should Match '<span class="version-badge">V0\.32</span>'
+        $buildSource | Should Match '\$builderVersion = "V0\.32"'
         $html | Should Not Match '<span class="version-badge">V0\.30</span>'
         $buildSource | Should Not Match '\$builderVersion = "V0\.30"'
         $html | Should Not Match '<span class="version-badge">V0\.29</span>'
@@ -144,7 +144,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         $buildSource | Should Not Match '\$builderVersion = "V0\.18"'
     }
 
-    It 'uses a single V0.31 HTML template source without PowerShell interpolation leftovers' {
+    It 'uses a single V0.32 HTML template source without PowerShell interpolation leftovers' {
         $templatePath = Join-Path $projectRoot 'templates\CodexChatIndex.template.html'
         $templatePath | Should Exist
         $template = Get-Content -LiteralPath $templatePath -Raw
@@ -241,7 +241,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         (Test-Path -LiteralPath $sharedDetailPath -PathType Leaf) | Should Be $true
     }
 
-    It 'keeps the V0.31 source directory free of generated runtime artifacts' {
+    It 'keeps the V0.32 source directory free of generated runtime artifacts' {
         foreach ($artifact in @(
             'CodexChatIndex.html',
             'CodexChatIndex.data.json',
@@ -256,9 +256,10 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         }
     }
 
-    It 'stores the V0.31 version marker in a dedicated source file' {
-        $versionFile = Join-Path $projectRoot 'VERSION_V0.31.txt'
+    It 'stores the V0.32 version marker in a dedicated source file' {
+        $versionFile = Join-Path $projectRoot 'VERSION_V0.32.txt'
         (Test-Path -LiteralPath $versionFile -PathType Leaf) | Should Be $true
+        (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.31.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.30.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.29.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.27.txt') -PathType Leaf) | Should Be $false
@@ -272,7 +273,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.27') -PathType Container) | Should Be $true
         (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.29') -PathType Container) | Should Be $true
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.28.txt') -PathType Leaf) | Should Be $false
-        (Get-Content -LiteralPath $versionFile -Raw).Trim() | Should Be 'V0.31'
+        (Get-Content -LiteralPath $versionFile -Raw).Trim() | Should Be 'V0.32'
     }
 
     It 'keeps the V0.27 archive beside the active repo with the exact approved source whitelist' {
@@ -1878,7 +1879,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         $summary.mode | Should Be 'Full'
         $summary.parsedCount | Should Be 2
         $summary.notice | Should Match '缓存版本不兼容'
-        $rebuiltCache.builderVersion | Should Be 'V0.31'
+        $rebuiltCache.builderVersion | Should Be 'V0.32'
         $rebuiltCache.cacheVersion | Should Be 5
         @($rebuiltCache.files[0].questionTexts).Count | Should BeGreaterThan 0
         ($rebuiltCache.files[0].PSObject.Properties.Name -contains 'otherBaseText') | Should Be $true
@@ -2357,7 +2358,7 @@ console.log(JSON.stringify(result));
     }
 
     It 'renders V0.22 collapsible directory and title panes with title-adjacent collapse buttons' {
-        $html | Should Match '<span class="version-badge">V0\.31</span>'
+        $html | Should Match '<span class="version-badge">V0\.32</span>'
         $html | Should Match '<main class="shell" id="appShell">'
         $html | Should Match '<section class="pane" id="workspacePane">'
         $html | Should Match '<section class="pane" id="sessionPane">'
@@ -5466,9 +5467,9 @@ console.log(JSON.stringify({ markdown }));
     It 'keeps reply composer actions from taking a full right-side text column' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
 
-        $html | Should Match '<span class="version-badge">V0\.31</span>'
+        $html | Should Match '<span class="version-badge">V0\.32</span>'
         $html | Should Not Match '<span class="version-badge">V0\.12\.1</span>'
-        $buildSource | Should Match '\$builderVersion = "V0\.31"'
+        $buildSource | Should Match '\$builderVersion = "V0\.32"'
         $buildSource | Should Not Match '\$builderVersion = "V0\.12\.1"'
 
         $html | Should Not Match 'padding:\s*12px\s+150px\s+52px\s+14px'
@@ -8753,7 +8754,7 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $result.clearFailureResult.successToast | Should Be $false
     }
 
-    It 'rebuilds a V0.30 cache once before returning to no-change V0.31 refreshes' {
+    It 'rebuilds a V0.30 cache once before returning to no-change V0.32 refreshes' {
         $cacheRoot = Join-Path $script:v031TempRoot 'v030-cache-upgrade'
         $outputPath = Join-Path $cacheRoot 'CodexChatIndex.html'
         $fixtureRoot = Join-Path $here 'fixtures\codex-v031-events'
@@ -8772,13 +8773,13 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $first.parsedCount | Should BeGreaterThan 0
         $first.notice | Should Match '缓存版本不兼容'
         $upgradedCache.cacheVersion | Should Be 5
-        $upgradedCache.builderVersion | Should Be 'V0.31'
+        $upgradedCache.builderVersion | Should Be 'V0.32'
         $second.mode | Should Be 'Incremental'
         $second.noChange | Should Be $true
         $second.parsedCount | Should Be 0
     }
 
-    It 'rebuilds an earlier V0.31 cache without the parser revision once' {
+    It 'rebuilds a V0.31 cache once during the V0.32 migration' {
         $cacheRoot = Join-Path $script:v031TempRoot 'v031-parser-revision-upgrade'
         $outputPath = Join-Path $cacheRoot 'CodexChatIndex.html'
         $fixtureRoot = Join-Path $here 'fixtures\codex-v031-events'
@@ -8786,6 +8787,7 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $sourceRoot = Get-TestSourceRoot $cacheRoot
         $cachePath = Join-Path $sourceRoot 'CodexChatIndex.cache.json'
         $cache = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json -Depth 100
+        $cache.builderVersion = 'V0.31'
         $cache.PSObject.Properties.Remove('parserRevision')
         Set-Content -LiteralPath $cachePath -Value ($cache | ConvertTo-Json -Depth 100) -Encoding UTF8
 
@@ -8797,21 +8799,21 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $first.parsedCount | Should BeGreaterThan 0
         $first.notice | Should Match '缓存版本不兼容'
         $upgradedCache.cacheVersion | Should Be 5
-        $upgradedCache.builderVersion | Should Be 'V0.31'
+        $upgradedCache.builderVersion | Should Be 'V0.32'
         $upgradedCache.parserRevision | Should Be 3
         $second.mode | Should Be 'Incremental'
         $second.noChange | Should Be $true
     }
 
-    It 'uses V0.31 markers with bounded-search cache version 5' {
+    It 'uses V0.32 markers with bounded-search cache version 5' {
         $buildSource = Get-Content -LiteralPath $buildScript -Raw
         $openSource = Get-Content -LiteralPath (Join-Path $projectRoot 'Open-CodexChatIndex.cmd') -Raw
-        (Get-Content -LiteralPath (Join-Path $projectRoot 'VERSION_V0.31.txt') -Raw).Trim() | Should Be 'V0.31'
-        $buildSource | Should Match '\$builderVersion = "V0\.31"'
-        $openSource | Should Match 'V0\.31'
-        $v031Events.Html | Should Match '<span class="version-badge">V0\.31</span>'
+        (Get-Content -LiteralPath (Join-Path $projectRoot 'VERSION_V0.32.txt') -Raw).Trim() | Should Be 'V0.32'
+        $buildSource | Should Match '\$builderVersion = "V0\.32"'
+        $openSource | Should Match 'V0\.32'
+        $v031Events.Html | Should Match '<span class="version-badge">V0\.32</span>'
         $v031Events.Cache.cacheVersion | Should Be 5
-        $v031Events.Cache.builderVersion | Should Be 'V0.31'
+        $v031Events.Cache.builderVersion | Should Be 'V0.32'
         $v031Events.Cache.parserRevision | Should Be 3
     }
 
@@ -8962,10 +8964,141 @@ Describe 'V0.31 bounded full-library tool output search' {
     }
 }
 
+Describe 'V0.32 managed image assets and title-group collapse' {
+    BeforeAll {
+        $script:v032TempRoot = Join-Path $env:TEMP ('CodexChatIndex-V032-' + [guid]::NewGuid().ToString('N'))
+        $script:v032Home = Join-Path $script:v032TempRoot 'codex-home'
+        $script:v032Runtime = Join-Path $script:v032TempRoot 'runtime'
+        $script:v032Cwd = Join-Path $script:v032TempRoot 'workspace'
+        $sessionDir = Join-Path $script:v032Home 'sessions\2026\09\27'
+        New-Item -ItemType Directory -Force $sessionDir, $script:v032Cwd | Out-Null
+        $script:v032LocalPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZswAAAABJRU5ErkJggg=='
+        $script:v032DataGifBase64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+        $script:v032LocalImage = Join-Path $script:v032Cwd 'snapshot.png'
+        [IO.File]::WriteAllBytes($script:v032LocalImage, [Convert]::FromBase64String($script:v032LocalPngBase64))
+        $script:v032ExpectedLocalAsset = (Get-FileHash -LiteralPath $script:v032LocalImage -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $script:v032ExpectedDataAsset = [BitConverter]::ToString($sha.ComputeHash([Convert]::FromBase64String($script:v032DataGifBase64))).Replace('-', '').ToLowerInvariant()
+        } finally { $sha.Dispose() }
 
+        $sessionId = '32323232-3232-4232-8232-323232323232'
+        $sessionPath = Join-Path $sessionDir ('rollout-2026-09-27T10-00-00-' + $sessionId + '.jsonl')
+        @(
+            ([ordered]@{ timestamp = '2026-09-27T10:00:00Z'; type = 'session_meta'; payload = [ordered]@{
+                id = $sessionId; timestamp = '2026-09-27T10:00:00Z'; cwd = $script:v032Cwd
+                source = 'cli'; model_provider = 'openai'; cli_version = 'v032-image-test'
+            } } | ConvertTo-Json -Depth 30 -Compress),
+            ([ordered]@{ timestamp = '2026-09-27T10:00:01Z'; type = 'response_item'; payload = [ordered]@{
+                type = 'message'; role = 'user'; content = @(
+                    [ordered]@{ type = 'input_text'; text = '托管图片：![local](snapshot.png) ![loopback](http://127.0.0.1:1/missing.png)' },
+                    [ordered]@{ type = 'input_image'; image_url = ('data:image/gif;base64,' + $script:v032DataGifBase64) }
+                )
+            } } | ConvertTo-Json -Depth 30 -Compress),
+            ([ordered]@{ timestamp = '2026-09-27T10:00:02Z'; type = 'event_msg'; payload = [ordered]@{
+                type = 'agent_message'; phase = 'final_answer'; message = 'done'
+            } } | ConvertTo-Json -Depth 30 -Compress)
+        ) | Set-Content -LiteralPath $sessionPath -Encoding UTF8
 
+        $script:v032Output = Join-Path $script:v032Runtime 'CodexChatIndex.html'
+        $script:v032FirstSummary = (& $buildScript -CodexHome $script:v032Home -OutputPath $script:v032Output -DataRoot $script:v032Runtime -RefreshMode Full -JsonSummary | Select-Object -Last 1) | ConvertFrom-Json
+        $sourceRoot = Get-TestSourceRoot $script:v032Runtime
+        $index = Get-Content -LiteralPath (Join-Path $sourceRoot 'CodexChatIndex.data.json') -Raw | ConvertFrom-Json -Depth 100
+        $session = @($index.workspaces | ForEach-Object { @($_.sessions) } | Select-Object -First 1)[0]
+        $script:v032DetailPath = [IO.Path]::GetFullPath((Join-Path $script:v032Runtime ([string]$session.detailHref)))
+        $script:v032FirstDetail = Get-Content -LiteralPath $script:v032DetailPath -Raw | ConvertFrom-Json -Depth 100
+    }
 
+    It 'manages local and Base64 images by content hash while a failed localhost URL stays nonfatal' {
+        $v032FirstSummary.failedCount | Should Be 0
+        $user = @($v032FirstDetail.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0]
+        $managed = @($user.images | Where-Object type -eq 'managed')
+        $failedUrl = @($user.images | Where-Object { $_.type -eq 'url' -and $_.status -eq 'unavailable' })
+        @($managed).Count | Should Be 2
+        (@($managed.assetId) -contains $v032ExpectedLocalAsset) | Should Be $true
+        (@($managed.assetId) -contains $v032ExpectedDataAsset) | Should Be $true
+        @($failedUrl).Count | Should Be 1
+        foreach ($image in $managed) {
+            $image.assetId | Should Match '^[0-9a-f]{64}$'
+            $objectPath = Join-Path $v032Runtime ('CodexChatIndex.images\objects\' + $image.assetId.Substring(0, 2) + '\' + $image.assetId + '.bin')
+            (Get-FileHash -LiteralPath $objectPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should Be $image.assetId
+        }
+        $state = Get-Content -LiteralPath (Join-Path $v032Runtime 'CodexChatIndex.images\state.json') -Raw | ConvertFrom-Json -Depth 100
+        $state.imageMigrationVersion | Should Be 1
+        $state.migrations.'local-codex' | Should Be 1
+    }
 
+    It 'restores managed local images for a downloaded WebDAV source without reading the original local path' {
+        $remoteSourceId = 'webdav-11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222-local-codex'
+        $remoteRoot = Join-Path $script:v032TempRoot 'remote-raw'
+        $remoteSessionDir = Join-Path $remoteRoot 'sessions\2026\09\27'
+        New-Item -ItemType Directory -Force $remoteSessionDir | Out-Null
+        $sourceSession = Get-ChildItem -LiteralPath (Join-Path $script:v032Home 'sessions\2026\09\27') -Filter '*.jsonl' -File | Select-Object -First 1
+        Copy-Item -LiteralPath $sourceSession.FullName -Destination (Join-Path $remoteSessionDir $sourceSession.Name)
+        $originMapPath = Join-Path $script:v032TempRoot 'remote-origin-map.json'
+        [ordered]@{
+            ('sessions/2026/09/27/' + $sourceSession.Name) = $sourceSession.FullName
+        } | ConvertTo-Json | Set-Content -LiteralPath $originMapPath -Encoding UTF8
 
+        $manifestRoot = Join-Path $script:v032Runtime 'CodexChatIndex.images\manifests'
+        $remoteManifest = Get-Content -LiteralPath (Join-Path $manifestRoot 'local-codex.json') -Raw | ConvertFrom-Json -Depth 100
+        $remoteManifest.sourceId = $remoteSourceId
+        $remoteManifest.sourceType = 'webdav-codex'
+        $remoteManifest | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath (Join-Path $manifestRoot ($remoteSourceId + '.json')) -Encoding UTF8
 
+        $remoteOutput = Join-Path $script:v032Runtime 'remote-output.html'
+        & $buildScript `
+            -OutputPath $remoteOutput `
+            -DataRoot $script:v032Runtime `
+            -SourceId $remoteSourceId `
+            -SourceLabel 'Laptop-云端 Codex' `
+            -SourceType 'webdav-codex' `
+            -RemoteSourceRoot $remoteRoot `
+            -OriginMapPath $originMapPath `
+            -DisableLocalPathImages `
+            -RefreshMode Full | Out-Null
+
+        $remoteSourceRoot = Get-TestSourceRoot $script:v032Runtime $remoteSourceId
+        $remoteIndex = Get-Content -LiteralPath (Join-Path $remoteSourceRoot 'CodexChatIndex.data.json') -Raw | ConvertFrom-Json -Depth 100
+        $remoteSession = @($remoteIndex.workspaces | ForEach-Object { @($_.sessions) } | Select-Object -First 1)[0]
+        $remoteDetailPath = [IO.Path]::GetFullPath((Join-Path $script:v032Runtime ([string]$remoteSession.detailHref)))
+        $remoteDetail = Get-Content -LiteralPath $remoteDetailPath -Raw | ConvertFrom-Json -Depth 100
+        $remoteUser = @($remoteDetail.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0]
+        $remoteManagedIds = @((@($remoteUser.images) | Where-Object type -eq 'managed').assetId)
+        ($remoteManagedIds -contains $script:v032ExpectedLocalAsset) | Should Be $true
+        ($remoteManagedIds -contains $script:v032ExpectedDataAsset) | Should Be $true
+    }
+
+    It 'reuses the first managed snapshot across replacement deletion and Full rebuilds' {
+        [IO.File]::WriteAllBytes($v032LocalImage, [Convert]::FromBase64String($v032DataGifBase64))
+        & $buildScript -CodexHome $v032Home -OutputPath $v032Output -DataRoot $v032Runtime -RefreshMode Full -JsonSummary | Out-Null
+        $replaced = Get-Content -LiteralPath $v032DetailPath -Raw | ConvertFrom-Json -Depth 100
+        $replacedIds = @((@($replaced.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0].images | Where-Object type -eq 'managed').assetId)
+        ($replacedIds -contains $v032ExpectedLocalAsset) | Should Be $true
+        Remove-Item -LiteralPath $v032LocalImage -Force
+        & $buildScript -CodexHome $v032Home -OutputPath $v032Output -DataRoot $v032Runtime -RefreshMode Full -JsonSummary | Out-Null
+        $deleted = Get-Content -LiteralPath $v032DetailPath -Raw | ConvertFrom-Json -Depth 100
+        $assetIds = @((@($deleted.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0].images | Where-Object type -eq 'managed').assetId)
+        ($assetIds -contains $v032ExpectedLocalAsset) | Should Be $true
+        ($assetIds -contains $v032ExpectedDataAsset) | Should Be $true
+    }
+
+    It 'keeps title-group collapse browser-only with sibling accessible controls' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match "TITLE_GROUP_COLLAPSE_STORAGE_KEY = 'Yuji\.titleGroupCollapse\.v1'"
+        $template | Should Match 'groupHeader\.appendChild\(groupHead\)'
+        $template | Should Match 'groupHeader\.appendChild\(groupToggle\)'
+        $template | Should Not Match 'groupHead\.appendChild\(groupToggle\)'
+        $template | Should Match "groupToggle\.setAttribute\('aria-expanded'"
+        $template | Should Match "String\(getCurrentSourceId\(\) \|\| ''\)"
+        $template | Should Match "String\(workspace && workspace\.cwd \|\| ''\)"
+        $template | Should Match "String\(group && group\.title \|\| ''\)"
+        $template | Should Match 'state\[getTitleGroupCollapseKey\(workspace, group\)\] === true'
+        $template | Should Match '\.title-group\.collapsed \.title-group-sessions'
+    }
+
+    AfterAll {
+        Remove-Item -LiteralPath $script:v032TempRoot -Force -Recurse -ErrorAction SilentlyContinue
+    }
+}
 

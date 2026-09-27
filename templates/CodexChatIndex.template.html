@@ -456,6 +456,10 @@
       flex-direction: column;
       gap: 6px;
     }
+    .title-group-header {
+      position: relative;
+      width: 100%;
+    }
     .title-group-head {
       position: relative;
       width: 100%;
@@ -469,6 +473,35 @@
       font-size: 13px;
       line-height: 1.35;
       cursor: pointer;
+    }
+    .title-group-header.has-toggle .title-group-head {
+      padding-right: 42px;
+    }
+    .title-group-toggle {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      z-index: 2;
+      width: 24px;
+      height: 24px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      transition: transform .15s ease, background .15s ease, color .15s ease;
+    }
+    .title-group-toggle:hover,
+    .title-group-toggle:focus-visible {
+      background: rgba(143,77,31,.10);
+      color: var(--accent);
+      outline: none;
+    }
+    .title-group.collapsed .title-group-toggle {
+      transform: rotate(-90deg);
     }
     .title-group-head:hover {
       border-color: var(--accent);
@@ -500,6 +533,9 @@
       gap: 6px;
       padding-left: 10px;
       border-left: 1px solid rgba(217,200,172,.72);
+    }
+    .title-group.collapsed .title-group-sessions {
+      display: none;
     }
     .title-group-head.has-note::after,
     .session-btn.has-note::after {
@@ -1708,7 +1744,9 @@
     const SOURCE_DATA_API_URL = '/api/source-data';
     const SEARCH_API_URL = '/api/search';
     const NOTES_API_URL = '/api/notes';
+    const IMAGE_ASSET_API_URL = '/api/image-asset';
     const SESSION_IMAGE_API_URL = '/api/session-image';
+    const TITLE_GROUP_COLLAPSE_STORAGE_KEY = 'Yuji.titleGroupCollapse.v1';
     const SESSION_TOKEN_API_URL = '/api/session-token';
     const SOURCE_STATUS_API_URL = '/api/source-status';
     const WEBDAV_API_ROOT = '/api/webdav';
@@ -3060,6 +3098,40 @@
       return !!(group && Array.isArray(group.sessions) && group.sessions.length > 1);
     }
 
+    function readTitleGroupCollapseState() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(TITLE_GROUP_COLLAPSE_STORAGE_KEY) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function getTitleGroupCollapseKey(workspace, group) {
+      return JSON.stringify([
+        String(getCurrentSourceId() || ''),
+        String(workspace && workspace.cwd || ''),
+        String(group && group.title || '')
+      ]);
+    }
+
+    function isTitleGroupCollapsed(workspace, group) {
+      if (!hasMultipleSessionBranches(group)) return false;
+      const state = readTitleGroupCollapseState();
+      return state[getTitleGroupCollapseKey(workspace, group)] === true;
+    }
+
+    function setTitleGroupCollapsed(workspace, group, collapsed) {
+      if (!hasMultipleSessionBranches(group)) return;
+      const state = readTitleGroupCollapseState();
+      const key = getTitleGroupCollapseKey(workspace, group);
+      if (collapsed) state[key] = true;
+      else delete state[key];
+      try {
+        localStorage.setItem(TITLE_GROUP_COLLAPSE_STORAGE_KEY, JSON.stringify(state));
+      } catch (_) {}
+    }
+
     function formatSessionMeta(session) {
       if (!session) return '';
       const parts = [];
@@ -4404,6 +4476,8 @@
         const groupNode = document.createElement('section');
         groupNode.className = 'title-group';
 
+        const groupHeader = document.createElement('div');
+        groupHeader.className = 'title-group-header';
         const groupHead = document.createElement('button');
         groupHead.type = 'button';
         const groupActive = group.sessions.some(session => getSessionKey(session) === selectedSessionKey);
@@ -4418,9 +4492,28 @@
           selectedWorkspaceId = current.workspace.id;
           await selectSessionFromTitlePane(group.sessions[0]);
         };
-        groupNode.appendChild(groupHead);
+        groupHeader.appendChild(groupHead);
 
         if (hasMultipleSessionBranches(group)) {
+          groupHeader.classList.add('has-toggle');
+          const collapsed = isTitleGroupCollapsed(current.workspace, group);
+          groupNode.classList.toggle('collapsed', collapsed);
+          const groupToggle = document.createElement('button');
+          groupToggle.type = 'button';
+          groupToggle.className = 'title-group-toggle';
+          groupToggle.textContent = '⌄';
+          groupToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+          groupToggle.title = collapsed ? '展开同标题会话' : '收起同标题会话';
+          groupToggle.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const nextCollapsed = !groupNode.classList.contains('collapsed');
+            groupNode.classList.toggle('collapsed', nextCollapsed);
+            groupToggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
+            groupToggle.title = nextCollapsed ? '展开同标题会话' : '收起同标题会话';
+            setTitleGroupCollapsed(current.workspace, group, nextCollapsed);
+          };
+          groupHeader.appendChild(groupToggle);
           const sessionRows = document.createElement('div');
           sessionRows.className = 'title-group-sessions';
           group.sessions.forEach(session => {
@@ -4439,6 +4532,7 @@
           });
           groupNode.appendChild(sessionRows);
         }
+        groupNode.insertBefore(groupHeader, groupNode.firstChild);
         sessionList.appendChild(groupNode);
       });
 
@@ -5133,6 +5227,11 @@
     function getEventImageSource(image) {
       if (!image) return '';
       if (typeof image === 'string') return image;
+      if (image.type === 'managed' && /^[0-9a-f]{64}$/i.test(String(image.assetId || ''))) {
+        return IMAGE_ASSET_API_URL +
+          '?sourceId=' + encodeURIComponent(getCurrentSourceId()) +
+          '&assetId=' + encodeURIComponent(String(image.assetId).toLowerCase());
+      }
       if (image.type !== 'local') return String(image.src || '');
       if (image.status === 'too-large' || !image.imageId) return '';
       const session = getSelectedSession();
@@ -5159,7 +5258,9 @@
       const sessionKey = encodeURIComponent(String(getSessionKey(getSelectedSession()) || ''));
       const source = String(src || '');
       let imageKey = 'src:' + source;
-      if (image && typeof image !== 'string' && image.type === 'local' && image.imageId) {
+      if (image && typeof image !== 'string' && image.type === 'managed' && image.assetId) {
+        imageKey = 'managed:' + String(image.assetId);
+      } else if (image && typeof image !== 'string' && image.type === 'local' && image.imageId) {
         imageKey = 'local:' + String(image.imageId);
       } else if (/^data:/i.test(source)) {
         imageKey = 'data:' + source.length + ':' + hashMessageImageSource(source);

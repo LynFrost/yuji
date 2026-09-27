@@ -3686,5 +3686,170 @@ class ServiceTransactionTests(unittest.TestCase):
         self.assertEqual(1, pointer["logicalFileCount"])
 
 
+
+    def _write_image_sidecar_fixture(self, service: WebDAVSyncService, source_type: str = "local-codex") -> str:
+        image_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZswAAAABJRU5ErkJggg=="
+        )
+        digest = hashlib.sha256(image_bytes).hexdigest()
+        root = service.runtime_root / "CodexChatIndex.images"
+        object_path = root / "objects" / digest[:2] / f"{digest}.bin"
+        object_path.parent.mkdir(parents=True, exist_ok=True)
+        object_path.write_bytes(image_bytes)
+        manifest_path = root / "manifests" / f"{source_type}.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "protocol": "YujiImageSync/v1",
+                    "sourceId": source_type,
+                    "sourceType": source_type,
+                    "assets": [
+                        {
+                            "assetId": digest,
+                            "mimeType": "image/png",
+                            "sizeBytes": len(image_bytes),
+                        }
+                    ],
+                    "references": [
+                        {"referenceKey": "fixture-reference", "assetId": digest}
+                    ],
+                    "totalObjects": 1,
+                    "totalBytes": len(image_bytes),
+                    "generatedAt": "2026-09-27T10:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return digest
+
+    def test_manual_upload_syncs_image_sidecar_and_deduplicates_object_uploads(self) -> None:
+        service = self._service("Desktop-image-sidecar")
+        digest = self._write_image_sidecar_fixture(service)
+
+        service.start_upload("local-codex")
+        first = self._wait(service)
+        self.assertEqual("completed", first["status"], first.get("errorSummary"))
+        current_path = next(
+            path
+            for path in _WebDAVHandler.resources
+            if path.endswith("/local-codex/images/current.json")
+        )
+        current = json.loads(_WebDAVHandler.resources[current_path])
+        self.assertEqual("YujiImageSync/v1", current["protocol"])
+        self.assertEqual(1, current["totalObjects"])
+        self.assertTrue(
+            any(
+                path.endswith(f"/images/objects/{digest[:2]}/{digest}.bin")
+                for path in _WebDAVHandler.resources
+            )
+        )
+
+        _WebDAVHandler.requests.clear()
+        service.start_upload("local-codex")
+        second = self._wait(service)
+        self.assertEqual("completed", second["status"], second.get("errorSummary"))
+        repeated_object_puts = [
+            item
+            for item in _WebDAVHandler.requests
+            if item["method"] == "PUT"
+            and f"/images/objects/{digest[:2]}/{digest}.bin" in item["path"]
+        ]
+        self.assertEqual([], repeated_object_puts)
+
+    def test_manual_upload_repairs_a_missing_image_sidecar_object(self) -> None:
+        service = self._service("Desktop-image-repair")
+        digest = self._write_image_sidecar_fixture(service)
+        service.start_upload("local-codex")
+        first = self._wait(service)
+        self.assertEqual("completed", first["status"], first.get("errorSummary"))
+        object_path = next(
+            path
+            for path in _WebDAVHandler.resources
+            if path.endswith(f"/images/objects/{digest[:2]}/{digest}.bin")
+        )
+        _WebDAVHandler.resources.pop(object_path, None)
+        _WebDAVHandler.etags.pop(object_path, None)
+        _WebDAVHandler.requests.clear()
+
+        service.start_upload("local-codex")
+        repaired = self._wait(service)
+        self.assertEqual("completed", repaired["status"], repaired.get("errorSummary"))
+        self.assertIn(object_path, _WebDAVHandler.resources)
+        self.assertEqual(digest, hashlib.sha256(_WebDAVHandler.resources[object_path]).hexdigest())
+        self.assertTrue(
+            any(
+                item["method"] == "PUT" and item["path"] == object_path
+                for item in _WebDAVHandler.requests
+            )
+        )
+
+    def test_download_without_image_sidecar_remains_v031_compatible(self) -> None:
+        source = self._service("Desktop-v031-compatible")
+        source.start_upload("local-codex")
+        self.assertEqual("completed", self._wait(source)["status"])
+        for path in list(_WebDAVHandler.resources):
+            if "/local-codex/images/" in path:
+                _WebDAVHandler.resources.pop(path, None)
+                _WebDAVHandler.etags.pop(path, None)
+
+        target = self._service("Laptop-v031-compatible")
+        remote = next(
+            item
+            for item in target.refresh_catalog()
+            if item["remoteSourceType"] == "local-codex"
+        )
+        target.start_download(remote["id"])
+        completed = self._wait(target)
+        self.assertEqual("completed", completed["status"], completed.get("errorSummary"))
+
+    def test_corrupt_image_sidecar_object_is_rejected_by_sha256(self) -> None:
+        source = self._service("Desktop-image-corrupt")
+        digest = self._write_image_sidecar_fixture(source)
+        source.start_upload("local-codex")
+        self.assertEqual("completed", self._wait(source)["status"])
+        object_path = next(
+            path
+            for path in _WebDAVHandler.resources
+            if path.endswith(f"/images/objects/{digest[:2]}/{digest}.bin")
+        )
+        original = _WebDAVHandler.resources[object_path]
+        _WebDAVHandler.resources[object_path] = bytes((value ^ 0xFF) for value in original)
+
+        target = self._service("Laptop-image-corrupt")
+        remote = next(
+            item
+            for item in target.refresh_catalog()
+            if item["remoteSourceType"] == "local-codex"
+        )
+        target.start_download(remote["id"])
+        failed = self._wait(target)
+        self.assertEqual("error", failed["status"])
+        self.assertIn("图片对象校验失败", failed.get("errorSummary", ""))
+
+    def test_refresh_image_schedule_marks_pending_when_webdav_is_busy(self) -> None:
+        service = self._service("Desktop-image-busy")
+        settings = json.loads(service.paths.settings_file.read_text(encoding="utf-8"))
+        started = threading.Event()
+        release = threading.Event()
+
+        def runner(_context) -> None:
+            started.set()
+            release.wait(2)
+
+        task = service._task_manager.start("upload", "local-codex", runner)
+        self.assertTrue(started.wait(1))
+        try:
+            result = service.schedule_image_sync("local-codex")
+            self.assertFalse(result["scheduled"])
+            self.assertTrue(result["pending"])
+            self.assertEqual("busy", result["reason"])
+            image_state = service._connection_state(settings)["imageSync"]["local-codex"]
+            self.assertTrue(image_state["pending"])
+        finally:
+            release.set()
+            service._task_manager._threads[task["taskId"]].join(timeout=2)
+
 if __name__ == "__main__":
     unittest.main()

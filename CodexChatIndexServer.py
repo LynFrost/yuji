@@ -44,6 +44,9 @@ HTML_FILE = TEMP_DIR / "CodexChatIndex.html"
 LOCAL_SOURCE_ID = "local-codex"
 LOCAL_CLAUDE_SOURCE_ID = "local-claude"
 SOURCE_DATA_ROOT = RUNTIME_DATA_DIR / "CodexChatIndex.sources"
+IMAGE_ASSET_ROOT = RUNTIME_DATA_DIR / "CodexChatIndex.images"
+IMAGE_OBJECT_ROOT = IMAGE_ASSET_ROOT / "objects"
+IMAGE_MANIFEST_ROOT = IMAGE_ASSET_ROOT / "manifests"
 SOURCES_FILE = RUNTIME_DATA_DIR / "CodexChatIndex.sources.json"
 EXTERNAL_SOURCES_ROOT = SERVE_ROOT / "外部聊天记录"
 CLAUDE_HOME = Path.home() / ".claude"
@@ -415,6 +418,15 @@ def run_build(refresh_mode: str = "Incremental", current_session_path: str | Non
         return False, "Build finished but required output is missing: " + ", ".join(missing), {}
     summary = parse_summary(stdout)
     mode = summary.get("mode") or refresh_mode
+    if source.get("type") in {"local-codex", "local-claude"}:
+        try:
+            summary["imageSync"] = get_webdav_service().schedule_image_sync(str(source.get("type")))
+        except Exception as error:
+            summary["imageSync"] = {
+                "scheduled": False,
+                "pending": True,
+                "reason": str(error),
+            }
     message = stdout or f"{mode} build completed"
     return True, message, summary
 
@@ -517,6 +529,60 @@ def resolve_registered_local_image(source_id: str, session_key: str, image_id: s
     if detect_local_image_mime(image_path) != mime_type:
         raise UnsupportedImageError("image content does not match its file extension")
     return image_path, mime_type
+
+
+def resolve_managed_image_asset(source_id: str, asset_id: str) -> tuple[Path, str]:
+    source_id = str(source_id or "").strip()
+    asset_id = str(asset_id or "").strip().casefold()
+    if not re.fullmatch(r"[0-9a-f]{64}", asset_id):
+        raise ValueError("invalid image asset id")
+
+    safe_source_id = re.sub(r"[^A-Za-z0-9._-]+", "-", source_id).strip("-") or LOCAL_SOURCE_ID
+    manifest_path = IMAGE_MANIFEST_ROOT / f"{safe_source_id}.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise FileNotFoundError("image manifest not found")
+    try:
+        if manifest_path.stat().st_size > 64 * 1024 * 1024:
+            raise UnsupportedImageError("image manifest is too large")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise FileNotFoundError("image manifest not found") from error
+    if not isinstance(manifest, dict):
+        raise FileNotFoundError("image manifest not found")
+
+    asset_record: dict | None = None
+    for item in manifest.get("assets") or []:
+        if isinstance(item, dict) and str(item.get("assetId") or "").casefold() == asset_id:
+            asset_record = item
+            break
+    if asset_record is None:
+        raise FileNotFoundError("image asset not registered")
+
+    declared_mime = str(asset_record.get("mimeType") or "")
+    try:
+        declared_size = int(asset_record.get("sizeBytes") or 0)
+    except (TypeError, ValueError) as error:
+        raise UnsupportedImageError("invalid image asset size") from error
+    if declared_mime not in set(LOCAL_IMAGE_MIME_TYPES.values()):
+        raise UnsupportedImageError("unsupported image type")
+    if declared_size <= 0 or declared_size > MAX_LOCAL_IMAGE_BYTES:
+        raise ImageTooLargeError("image exceeds 30 MiB limit")
+
+    object_root = IMAGE_OBJECT_ROOT.resolve(strict=False)
+    image_path = (IMAGE_OBJECT_ROOT / asset_id[:2] / f"{asset_id}.bin").resolve(strict=False)
+    try:
+        image_path.relative_to(object_root)
+    except ValueError as error:
+        raise FileNotFoundError("image asset not found") from error
+    if image_path.is_symlink() or not image_path.is_file():
+        raise FileNotFoundError("image asset not found")
+    actual_size = image_path.stat().st_size
+    if actual_size != declared_size or actual_size > MAX_LOCAL_IMAGE_BYTES:
+        raise UnsupportedImageError("image asset size does not match manifest")
+    detected_mime = detect_local_image_mime(image_path)
+    if detected_mime != declared_mime:
+        raise UnsupportedImageError("image asset content does not match manifest")
+    return image_path, detected_mime
 
 
 def now_iso() -> str:
@@ -897,6 +963,23 @@ class Handler(SimpleHTTPRequestHandler):
                     source_id,
                     query_params.get("sessionKey", [""])[0],
                     query_params.get("imageId", [""])[0],
+                )
+                self._stream_local_image(image_path, mime_type)
+            except ValueError as error:
+                self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+            except FileNotFoundError as error:
+                self.send_error(HTTPStatus.NOT_FOUND, str(error))
+            except UnsupportedImageError as error:
+                self.send_error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, str(error))
+            except ImageTooLargeError as error:
+                self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(error))
+            return
+        if parsed.path == "/api/image-asset":
+            try:
+                source_id = resolve_source_id(query_params.get("sourceId", [""])[0], persist=False)
+                image_path, mime_type = resolve_managed_image_asset(
+                    source_id,
+                    query_params.get("assetId", [""])[0],
                 )
                 self._stream_local_image(image_path, mime_type)
             except ValueError as error:
