@@ -798,6 +798,20 @@
       word-break: break-word;
       pointer-events: none;
     }
+    .pinned-notes-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 3100;
+      pointer-events: none;
+    }
+    .note-tooltip-pinned {
+      pointer-events: auto;
+      user-select: text;
+    }
+    .note-tooltip-pinned:hover,
+    .note-tooltip-pinned:focus-within {
+      z-index: 2;
+    }
     .note-tooltip-label {
       display: block;
       margin-bottom: 6px;
@@ -1543,6 +1557,7 @@
         </div>
       </div>
       <label class="source-selector" for="sourceSelect"><select id="sourceSelect" aria-label="选择聊天记录来源"><option value="local-codex">本机 Codex</option></select></label>
+      <button type="button" id="noteDisplayToggleButton" class="refresh-btn" title="常驻显示当前可见备注" aria-pressed="false">备注</button>
       <button type="button" id="cloudSettingsButton" class="refresh-btn" title="WebDAV 云设置">云设置</button>
       <button type="button" id="syncButton" class="refresh-btn sync-btn" hidden>上传</button>
       <button type="button" id="refreshButton" class="refresh-btn" onclick="refreshIndex()">刷新</button>
@@ -1745,6 +1760,7 @@
       <span class="note-tooltip-label">备注</span>
       <div id="noteTooltipBody" class="note-tooltip-body"></div>
     </div>
+    <div id="pinnedNotesLayer" class="pinned-notes-layer"></div>
 
     <script>
     const INDEX_URL = '{{INDEX_URL}}';
@@ -1755,6 +1771,7 @@
     const IMAGE_ASSET_API_URL = '/api/image-asset';
     const SESSION_IMAGE_API_URL = '/api/session-image';
     const TITLE_GROUP_COLLAPSE_STORAGE_KEY = 'Yuji.titleGroupCollapse.v1';
+    const NOTE_DISPLAY_MODE_STORAGE_KEY = 'Yuji.noteDisplayMode.v1';
     const SESSION_TOKEN_API_URL = '/api/session-token';
     const SOURCE_STATUS_API_URL = '/api/source-status';
     const WEBDAV_API_ROOT = '/api/webdav';
@@ -1785,6 +1802,7 @@
     };
     const globalSidebarToggleButton = document.getElementById('globalSidebarToggleButton');
     const sourceSelect = document.getElementById('sourceSelect');
+    const noteDisplayToggleButton = document.getElementById('noteDisplayToggleButton');
     const cloudSettingsButton = document.getElementById('cloudSettingsButton');
     const syncButton = document.getElementById('syncButton');
     const refreshButton = document.getElementById('refreshButton');
@@ -1822,6 +1840,7 @@
     const noteError = document.getElementById('noteError');
     const noteTooltip = document.getElementById('noteTooltip');
     const noteTooltipBody = document.getElementById('noteTooltipBody');
+    const pinnedNotesLayer = document.getElementById('pinnedNotesLayer');
     const imagePreviewModal = document.getElementById('imagePreviewModal');
     const imagePreviewImage = document.getElementById('imagePreviewImage');
     const imagePreviewClose = document.getElementById('imagePreviewClose');
@@ -1871,6 +1890,8 @@
       loaded: false,
       available: true
     };
+    let noteDisplayMode = readNoteDisplayMode();
+    let pinnedNotesFrame = 0;
     let activeNoteTarget = null;
     let webdavState = {
       settings: null,
@@ -3291,6 +3312,7 @@
         notesState.available = false;
         console.warn('备注读取失败', error);
       }
+      schedulePinnedNotesRefresh();
     }
 
     function noteTargetFromElement(element) {
@@ -3403,6 +3425,7 @@
         globalSidebarToggleButton.title = title;
         globalSidebarToggleButton.setAttribute('aria-label', title);
       }
+      schedulePinnedNotesRefresh();
     }
 
     function positionFloatingPanel(panel, x, y) {
@@ -3519,7 +3542,143 @@
       }
     }
 
+    function readNoteDisplayMode() {
+      try {
+        return localStorage.getItem(NOTE_DISPLAY_MODE_STORAGE_KEY) === 'pinned' ? 'pinned' : 'hover';
+      } catch (_) {
+        return 'hover';
+      }
+    }
+
+    function syncNoteDisplayToggleButton() {
+      if (!noteDisplayToggleButton) return;
+      const pinned = noteDisplayMode === 'pinned';
+      noteDisplayToggleButton.textContent = pinned ? '隐藏' : '备注';
+      noteDisplayToggleButton.title = pinned ? '隐藏常驻备注，恢复悬停显示' : '常驻显示当前可见备注';
+      noteDisplayToggleButton.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+    }
+
+    function clearPinnedNotes() {
+      if (!pinnedNotesLayer) return;
+      pinnedNotesLayer.replaceChildren();
+    }
+
+    function setNoteDisplayMode(mode, options) {
+      const settings = Object.assign({ persist: true }, options || {});
+      noteDisplayMode = mode === 'pinned' ? 'pinned' : 'hover';
+      if (settings.persist) {
+        try {
+          localStorage.setItem(NOTE_DISPLAY_MODE_STORAGE_KEY, noteDisplayMode);
+        } catch (_) {}
+      }
+      syncNoteDisplayToggleButton();
+      hideNoteTooltip();
+      if (noteDisplayMode === 'pinned') schedulePinnedNotesRefresh();
+      else clearPinnedNotes();
+    }
+
+    function isPinnedNoteAnchorVisible(element) {
+      if (noteDisplayMode !== 'pinned' || !element || !sessionList || paneCollapseState.titles) return false;
+      const rect = element.getBoundingClientRect();
+      const listRect = sessionList.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      return (
+        rect.bottom > listRect.top &&
+        rect.top < listRect.bottom &&
+        rect.right > listRect.left &&
+        rect.left < listRect.right &&
+        rect.bottom > 0 &&
+        rect.top < window.innerHeight
+      );
+    }
+
+    function positionPinnedNote(panel, anchor) {
+      if (!panel || !anchor) return;
+      const anchorRect = anchor.getBoundingClientRect();
+      panel.hidden = false;
+      panel.style.left = '0px';
+      panel.style.top = '0px';
+      const panelRect = panel.getBoundingClientRect();
+      const margin = 10;
+      const gap = 10;
+      const header = document.querySelector('header');
+      const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+      const minTop = Math.max(margin, headerBottom + 4);
+      let left = anchorRect.right + gap;
+      let top = Math.max(anchorRect.top, minTop);
+      if (left + panelRect.width + margin > window.innerWidth) {
+        left = Math.max(margin, window.innerWidth - panelRect.width - margin);
+      }
+      if (top + panelRect.height + margin > window.innerHeight) {
+        top = Math.max(minTop, window.innerHeight - panelRect.height - margin);
+      }
+      panel.style.left = left + 'px';
+      panel.style.top = top + 'px';
+    }
+
+    function refreshPinnedNotes() {
+      if (!pinnedNotesLayer) return;
+      if (noteDisplayMode !== 'pinned' || paneCollapseState.titles) {
+        clearPinnedNotes();
+        return;
+      }
+
+      const anchors = Array.from(sessionList.querySelectorAll('.title-group-head.has-note, .session-btn.has-note'))
+        .filter(isPinnedNoteAnchorVisible);
+      const existing = new Map(
+        Array.from(pinnedNotesLayer.querySelectorAll('.note-tooltip-pinned[data-note-key]'))
+          .map(panel => [panel.dataset.noteKey || '', panel])
+      );
+      const keep = new Set();
+
+      anchors.forEach(anchor => {
+        const target = noteTargetFromElement(anchor);
+        const note = target && getNote(target.key);
+        if (!target || !note || !note.note) return;
+        const key = String(target.key || '');
+        keep.add(key);
+        let panel = existing.get(key);
+        if (!panel) {
+          panel = document.createElement('div');
+          panel.className = 'note-tooltip note-tooltip-pinned';
+          panel.dataset.noteKey = key;
+          const label = document.createElement('span');
+          label.className = 'note-tooltip-label';
+          label.textContent = '备注';
+          const body = document.createElement('div');
+          body.className = 'note-tooltip-body';
+          panel.appendChild(label);
+          panel.appendChild(body);
+          pinnedNotesLayer.appendChild(panel);
+        }
+        const body = panel.querySelector('.note-tooltip-body');
+        if (body) body.textContent = note.note;
+        positionPinnedNote(panel, anchor);
+      });
+
+      existing.forEach((panel, key) => {
+        if (!keep.has(key)) panel.remove();
+      });
+    }
+
+    function schedulePinnedNotesRefresh() {
+      if (noteDisplayMode !== 'pinned') {
+        clearPinnedNotes();
+        return;
+      }
+      if (typeof requestAnimationFrame !== 'function') {
+        refreshPinnedNotes();
+        return;
+      }
+      if (pinnedNotesFrame) return;
+      pinnedNotesFrame = requestAnimationFrame(() => {
+        pinnedNotesFrame = 0;
+        refreshPinnedNotes();
+      });
+    }
+
     function showNoteTooltip(event, target) {
+      if (noteDisplayMode === 'pinned') return;
       const note = target && getNote(target.key);
       if (!note || !note.note || !noteTooltip || !noteTooltipBody) return;
       noteTooltipBody.textContent = note.note;
@@ -3527,7 +3686,7 @@
     }
 
     function moveNoteTooltip(event) {
-      if (!noteTooltip || noteTooltip.hidden) return;
+      if (noteDisplayMode === 'pinned' || !noteTooltip || noteTooltip.hidden) return;
       positionFloatingPanel(noteTooltip, event.clientX || 0, event.clientY || 0);
     }
 
@@ -4472,6 +4631,7 @@
       ensureSelection();
       const visible = getVisibleWorkspaces();
       sessionList.innerHTML = '';
+      clearPinnedNotes();
 
       if (!selectedWorkspaceId) {
         sessionList.innerHTML = '<div class="empty-state">' + escapeHtml(getGlobalSearchEmptyText() || '先选择一个工作目录。') + '</div>';
@@ -4560,6 +4720,7 @@
         groupNode.insertBefore(groupHeader, groupNode.firstChild);
         sessionList.appendChild(groupNode);
       });
+      schedulePinnedNotesRefresh();
 
       if (skipViewerSync) {
         renderViewer();
@@ -6405,6 +6566,12 @@
     if (globalSidebarToggleButton) {
       globalSidebarToggleButton.addEventListener('click', toggleAllSidebars);
     }
+    if (noteDisplayToggleButton) {
+      noteDisplayToggleButton.addEventListener('click', () => {
+        setNoteDisplayMode(noteDisplayMode === 'pinned' ? 'hover' : 'pinned');
+      });
+    }
+    sessionList.addEventListener('scroll', schedulePinnedNotesRefresh, { passive: true });
     workspaceFilterInput.addEventListener('input', () => {
       renderWorkspaceList();
     });
@@ -6419,16 +6586,19 @@
       openNoteMenu(event, noteTargetFromElement(item));
     });
     sessionList.addEventListener('mouseover', event => {
+      if (noteDisplayMode === 'pinned') return;
       const item = event.target && event.target.closest('.title-group-head.has-note, .session-btn.has-note');
       if (!item || !sessionList.contains(item)) return;
       showNoteTooltip(event, noteTargetFromElement(item));
     });
     sessionList.addEventListener('mousemove', event => {
+      if (noteDisplayMode === 'pinned') return;
       const item = event.target && event.target.closest('.title-group-head.has-note, .session-btn.has-note');
       if (!item) return;
       moveNoteTooltip(event);
     });
     sessionList.addEventListener('mouseout', event => {
+      if (noteDisplayMode === 'pinned') return;
       const item = event.target && event.target.closest('.title-group-head.has-note, .session-btn.has-note');
       if (!item) return;
       if (event.relatedTarget && item.contains(event.relatedTarget)) return;
@@ -6589,6 +6759,7 @@
       window.addEventListener('resize', () => {
         resetReplyInputMetrics();
         scheduleReplyComposerUpdate();
+        schedulePinnedNotesRefresh();
       });
       window.addEventListener('focus', () => {
         void refreshCloudSources(false);
@@ -6824,6 +6995,7 @@
       hideNoteTooltip();
     });
 
+    syncNoteDisplayToggleButton();
     syncPaneCollapseState();
 
     (async function boot() {
