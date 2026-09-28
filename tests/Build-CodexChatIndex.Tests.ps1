@@ -9191,7 +9191,7 @@ Describe 'V0.32 managed images with V0.34 title and note interactions' {
         $template | Should Match 'groupNode\.dataset\.collapseKey = getTitleGroupCollapseKey\(current\.workspace, group\)'
         $bulkFunction = [regex]::Match(
             $template,
-            'function toggleAllVisibleTitleGroups\(\) \{[\s\S]*?\n    \}\n\n    function toggleTitleGroup'
+            'function toggleAllVisibleTitleGroups\(\) \{[\s\S]*?\r?\n    \}\r?\n\r?\n    function toggleTitleGroup'
         ).Value
         $bulkFunction | Should Not BeNullOrEmpty
         $bulkFunction | Should Match 'const allCollapsed = groups\.every\(groupNode => groupNode\.classList\.contains\(''collapsed''\)\)'
