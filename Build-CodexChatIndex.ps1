@@ -579,7 +579,7 @@ function Get-TextImageCandidates {
         'https?://[^\s<>"'']+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s<>"'']*)?',
         '(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n<>|?*"]+?\.(?:png|jpe?g|gif|webp|avif)(?=$|[\s)\]},;!?，。；！])',
         '["''][^"''\r\n]+\.(?:png|jpe?g|gif|webp|avif)["'']',
-        '(?:\.{1,2}[\\/])?[^\s<>"''()、，。]+[\\/][^\s<>"''()、，。]+\.(?:png|jpe?g|gif|webp|avif)',
+        '(?:\.{1,2}[\\/])?[^\s<>"''()、，。:：]+[\\/][^\s<>"''()、，。:：]+\.(?:png|jpe?g|gif|webp|avif)',
         '(?<![\p{L}\p{N}_.-])[\p{L}\p{N}_.-]+\.(?:png|jpe?g|gif|webp|avif)(?![\p{L}\p{N}_.-])'
     )
     foreach ($pattern in $patterns) {
@@ -3843,7 +3843,7 @@ $otherSearchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) 
     Join-Path $effectiveDataRoot 'CodexChatIndex.search.other.json'
 }
 $builderVersion = "V0.34"
-$parserRevision = 4
+$parserRevision = 5
 $templatePath = Join-Path $PSScriptRoot 'templates\CodexChatIndex.template.html'
 $indexRelativePath = Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $dataOutput
 if ($indexRelativePath -notmatch '^(\./|\.\./|/)') {
