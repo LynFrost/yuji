@@ -667,32 +667,7 @@ Describe 'Build-CodexChatIndex session reader outputs' {
 
         $imageIndex.imageReferences | Should Be 1
         $imageSession.hasImageReference | Should Be $true
-        $imageRecord = @($imageDetail.events[0].images)[0]
-        $imageRecord.type | Should Be 'managed'
-        $imageRecord.assetId | Should Match '^[0-9a-f]{64}
-        ($imageIndex | ConvertTo-Json -Depth 100 -Compress) | Should Not Match 'iVBORw0KGgo'
-        ($imageSearch | ConvertTo-Json -Depth 100 -Compress) | Should Not Match 'iVBORw0KGgo'
-        $imageHtml | Should Match 'class="message-images"'
-        $imageHtml | Should Match 'loading="lazy"'
-        $imageHtml | Should Match 'function showImagePreviewAt'
-        $imageHtml | Should Match 'function openImagePreviewFromButton'
-        $imageHtml | Should Match 'onclick="openImagePreviewFromButton\(this\)"'
-        $imageHtml | Should Not Match 'onclick="openImagePreview\('
-        $imageHtml | Should Match 'id="imagePreviewModal"'
-        $imageHtml | Should Match 'id="imagePreviewImage"'
-        $imageHtml | Should Match 'id="imagePreviewClose"'
-        $imageHtml | Should Match 'id="imagePreviewPrev"'
-        $imageHtml | Should Match 'id="imagePreviewNext"'
-        $imageHtml | Should Match 'id="imagePreviewStage"'
-        $imageHtml | Should Match 'id="imagePreviewCount"'
-        $imageHtml | Should Match 'id="imagePreviewStatus"'
-        $imageHtml | Should Not Match 'window\.open\(src'
-    }
-
-        $imageRecord.mimeType | Should Be 'image/png'
-        ($imageRecord.PSObject.Properties.Name -contains 'src') | Should Be $false
-        $managedObjectPath = Join-Path $imageRoot ('CodexChatIndex.images\objects\' + $imageRecord.assetId.Substring(0, 2) + '\' + $imageRecord.assetId + '.bin')
-        (Test-Path -LiteralPath $managedObjectPath -PathType Leaf) | Should Be $true
+        $imageDetail.events[0].images[0].src | Should Be $imageDataUrl
         $imageDetail.events[0].rawText | Should Be '请看这张图，不要把 base64 放进搜索。'
         ($imageIndex | ConvertTo-Json -Depth 100 -Compress) | Should Not Match 'iVBORw0KGgo'
         ($imageSearch | ConvertTo-Json -Depth 100 -Compress) | Should Not Match 'iVBORw0KGgo'
@@ -1278,19 +1253,18 @@ console.log(JSON.stringify({
         $detail = Get-Content -LiteralPath ([IO.Path]::GetFullPath((Join-Path $runtimeRoot ([string]$session.detailHref)))) -Raw | ConvertFrom-Json -Depth 100
         $images = @($detail.events | Where-Object kind -eq 'user' | Select-Object -First 1).images
 
-        @($images).Count | Should Be 5
-        $managed = @($images | Where-Object type -eq 'managed')
-        $unavailable = @($images | Where-Object { $_.type -eq 'local' -and $_.status -eq 'unavailable' })
-        $expectedAsset = (Get-FileHash -LiteralPath $targetImagePath -Algorithm SHA256).Hash.ToLowerInvariant()
-        @($managed).Count | Should Be 4
-        @($managed | Where-Object assetId -eq $expectedAsset).Count | Should Be 4
-        @($unavailable).Count | Should Be 1
-        $unavailable[0].localPath | Should Match 'not-recursive\.png
-    }
-
-        $unavailable[0].localPath | Should Not Match 'child[\\/]not-recursive\.png
-    }
-
+        @($images).Count | Should Be 4
+        $expectedTargetPath = (Get-Item -LiteralPath $targetImagePath).FullName
+        $expectedNestedPath = (Get-Item -LiteralPath $nestedImagePath).FullName
+        $expectedUnicodePath = (Get-Item -LiteralPath $unicodeImagePath).FullName
+        $expectedSpacedPath = (Get-Item -LiteralPath $spacedImagePath).FullName
+        @($images | Where-Object { $_.type -eq 'local' -and $_.localPath -eq $expectedTargetPath -and $_.imageId }).Count | Should Be 1
+        @($images | Where-Object { $_.type -eq 'local' -and $_.localPath -eq $expectedNestedPath -and $_.imageId }).Count | Should Be 1
+        @($images | Where-Object { $_.type -eq 'local' -and $_.localPath -eq $expectedUnicodePath -and $_.imageId }).Count | Should Be 1
+        @($images | Where-Object { $_.type -eq 'local' -and $_.localPath -eq $expectedSpacedPath -and $_.imageId }).Count | Should Be 1
+        @($images | Where-Object { $_.localPath -eq (Get-Item -LiteralPath (Join-Path $imageCwd 'second.webp')).FullName }).Count | Should Be 0
+        @($images | Where-Object { $_.localPath -eq (Get-Item -LiteralPath (Join-Path $imageCwd '空格.png')).FullName }).Count | Should Be 0
+        @($images | Where-Object { $_.localPath -match 'not-recursive\.png$' }).Count | Should Be 0
         $session.hasImageReference | Should Be $true
     }
 
@@ -1334,21 +1308,16 @@ console.log(JSON.stringify({
         $images = @($detail.events | Where-Object kind -eq 'user' | Select-Object -First 1).images
 
         @($images).Count | Should Be 3
-        $managed = @($images | Where-Object type -eq 'managed')
-        $remote = @($images | Where-Object type -eq 'url')
-        $expectedAsset = (Get-FileHash -LiteralPath $localImagePath -Algorithm SHA256).Hash.ToLowerInvariant()
-        @($managed).Count | Should Be 2
-        @($managed | Where-Object assetId -eq $expectedAsset).Count | Should Be 2
-        @($remote).Count | Should Be 1
-        $remote[0].src | Should Be 'https://example.test/claude.png'
-        $remote[0].status | Should Be 'unavailable'
+        $images[0].src | Should Be ('data:image/png;base64,' + $base64Data)
+        $images[1].src | Should Be 'https://example.test/claude.png'
+        $images[2].type | Should Be 'local'
+        $images[2].localPath | Should Be (Get-Item -LiteralPath $localImagePath).FullName
         $session.hasImageReference | Should Be $true
     }
 
-    It 'serves only registered V0.32 managed image assets and rejects unsafe asset requests' {
+    It 'serves only V0.27 registered local images and rejects unsafe image requests' {
         $python = @'
 import base64
-import hashlib
 import importlib.util
 import json
 import pathlib
@@ -1357,67 +1326,63 @@ import tempfile
 spec = importlib.util.spec_from_file_location("codex_server", __import__("sys").argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-
 with tempfile.TemporaryDirectory() as tmp_dir:
     root = pathlib.Path(tmp_dir)
     module.RUNTIME_DATA_DIR = root / "runtime"
-    module.IMAGE_ASSET_ROOT = module.RUNTIME_DATA_DIR / "CodexChatIndex.images"
-    module.IMAGE_OBJECT_ROOT = module.IMAGE_ASSET_ROOT / "objects"
-    module.IMAGE_MANIFEST_ROOT = module.IMAGE_ASSET_ROOT / "manifests"
-    module.IMAGE_MANIFEST_ROOT.mkdir(parents=True)
-
-    valid_bytes = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lrWg9QAAAABJRU5ErkJggg==")
-    valid_id = hashlib.sha256(valid_bytes).hexdigest()
-    valid_path = module.IMAGE_OBJECT_ROOT / valid_id[:2] / f"{valid_id}.bin"
-    valid_path.parent.mkdir(parents=True)
-    valid_path.write_bytes(valid_bytes)
-
-    corrupt_id = "b" * 64
-    corrupt_path = module.IMAGE_OBJECT_ROOT / corrupt_id[:2] / f"{corrupt_id}.bin"
-    corrupt_path.parent.mkdir(parents=True, exist_ok=True)
-    corrupt_path.write_bytes(b"not an image")
-
-    oversized_id = "c" * 64
-    manifest = {
-        "schemaVersion": 1,
-        "protocol": "YujiImageSync/v1",
-        "sourceId": "local-codex",
-        "assets": [
-            {"assetId": valid_id, "mimeType": "image/png", "sizeBytes": len(valid_bytes)},
-            {"assetId": corrupt_id, "mimeType": "image/png", "sizeBytes": len(b"not an image")},
-            {"assetId": oversized_id, "mimeType": "image/png", "sizeBytes": module.MAX_LOCAL_IMAGE_BYTES + 1},
-        ],
-    }
-    (module.IMAGE_MANIFEST_ROOT / "local-codex.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    def outcome(asset_id):
+    module.SOURCE_DATA_ROOT = module.RUNTIME_DATA_DIR / "CodexChatIndex.sources"
+    image = root / "allowed.png"
+    image.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lrWg9QAAAABJRU5ErkJggg=="))
+    spoofed = root / "spoofed.png"
+    spoofed.write_bytes(b"not a png")
+    mismatched = root / "mismatched.jpg"
+    mismatched.write_bytes(image.read_bytes())
+    svg = root / "blocked.svg"
+    svg.write_text("<svg/>", encoding="utf-8")
+    huge = root / "huge.jpg"
+    with huge.open("wb") as stream:
+        stream.truncate(module.MAX_LOCAL_IMAGE_BYTES + 1)
+    paths = module.get_source_paths("local-codex")
+    paths["details"].mkdir(parents=True)
+    detail_name = "session-detail.json"
+    (paths["details"] / detail_name).write_text(json.dumps({
+        "events": [{"kind": "user", "images": [
+            {"type": "local", "imageId": "ok", "localPath": str(image)},
+            {"type": "local", "imageId": "spoofed", "localPath": str(spoofed)},
+            {"type": "local", "imageId": "mismatched", "localPath": str(mismatched)},
+            {"type": "local", "imageId": "svg", "localPath": str(svg)},
+            {"type": "local", "imageId": "huge", "localPath": str(huge)}
+        ]}]
+    }), encoding="utf-8")
+    paths["data"].write_text(json.dumps({
+        "source": {"id": "local-codex", "label": "Local", "type": "local-codex"},
+        "workspaces": [{"sessions": [{"key": "session-key", "detailHref": "ignored/" + detail_name}]}]
+    }), encoding="utf-8")
+    def outcome(image_id):
         try:
-            resolved, mime_type = module.resolve_managed_image_asset("local-codex", asset_id)
+            resolved, mime_type = module.resolve_registered_local_image("local-codex", "session-key", image_id)
             return {"path": str(resolved), "mime": mime_type}
         except Exception as error:
             return {"error": type(error).__name__}
-
     print(json.dumps({
-        "validId": valid_id,
-        "ok": outcome(valid_id),
-        "corrupt": outcome(corrupt_id),
-        "oversized": outcome(oversized_id),
-        "unknown": outcome("d" * 64),
-        "invalid": outcome("../bad"),
+        "ok": outcome("ok"),
+        "spoofed": outcome("spoofed"),
+        "mismatched": outcome("mismatched"),
+        "unknown": outcome("missing"),
+        "svg": outcome("svg"),
+        "huge": outcome("huge")
     }))
 '@
         $result = python -c $python $serverScript | ConvertFrom-Json -Depth 20
-        $result.validId | Should Match '^[0-9a-f]{64}$'
-        $result.ok.path | Should Match ([regex]::Escape($result.validId) + '\.bin$')
+        $result.ok.path | Should Match 'allowed\.png$'
         $result.ok.mime | Should Be 'image/png'
-        $result.corrupt.error | Should Be 'UnsupportedImageError'
-        $result.oversized.error | Should Be 'ImageTooLargeError'
+        $result.spoofed.error | Should Be 'UnsupportedImageError'
+        $result.mismatched.error | Should Be 'UnsupportedImageError'
         $result.unknown.error | Should Be 'FileNotFoundError'
-        $result.invalid.error | Should Be 'ValueError'
+        $result.svg.error | Should Be 'UnsupportedImageError'
+        $result.huge.error | Should Be 'ImageTooLargeError'
 
         $serverSource = Get-Content -LiteralPath $serverScript -Raw
-        $serverSource | Should Match 'if parsed\.path == "/api/image-asset"'
-        $serverSource | Should Match 'resolve_managed_image_asset'
+        $serverSource | Should Match 'if parsed\.path == "/api/session-image"'
         $serverSource | Should Match 'X-Content-Type-Options'
         $serverSource | Should Not Match 'query_params\.get\("path"'
     }
@@ -1515,14 +1480,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
         $userEvents.Count | Should Be 1
         $userEvents[0].rawText | Should Be '同一条提问不要重复显示。'
-        $dedupeImage = @($userEvents[0].images)[0]
-        $dedupeImage.type | Should Be 'managed'
-        $dedupeImage.assetId | Should Match '^[0-9a-f]{64}
-        $dedupeIndex.imageReferences | Should Be 1
-    }
-
-        $dedupeImage.mimeType | Should Be 'image/png'
-        ($dedupeImage.PSObject.Properties.Name -contains 'src') | Should Be $false
+        $userEvents[0].images[0].src | Should Be $imageDataUrl
         $dedupeSession.userCount | Should Be 1
         $dedupeIndex.imageReferences | Should Be 1
     }
