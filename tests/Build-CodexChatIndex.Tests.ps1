@@ -9131,6 +9131,44 @@ Describe 'V0.32 managed image assets and title-group collapse' {
         $template | Should Match '\.title-group\.collapsed \.title-group-sessions'
     }
 
+    It 'uses V0.33 mother-title clicks only for collapse while single titles still open sessions' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match 'function toggleTitleGroup\(groupNode, groupToggle, workspace, group\)'
+        $template | Should Match 'groupHead\.onclick = event => \{[\s\S]*?toggleTitleGroup\(groupNode, groupToggle, current\.workspace, group\)'
+        $template | Should Match 'groupToggle\.onclick = event => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?toggleTitleGroup\(groupNode, groupToggle, current\.workspace, group\)'
+        $template | Should Match "\} else \{\s*groupHead\.onclick = async \(\) => \{[\s\S]*?selectSessionFromTitlePane\(group\.sessions\[0\]\)"
+        $template | Should Not Match 'if \(hasMultipleSessionBranches\(group\)\)[\s\S]{0,900}?selectSessionFromTitlePane\(group\.sessions\[0\]\)'
+        $template | Should Match 'groupHead\.setAttribute\(''aria-expanded'''
+        $template | Should Match '\.title-group-toggle \{[\s\S]*?border: 1px solid rgba\(143,77,31,\.34\)'
+    }
+
+    It 'adds browser-only pinned note mode without changing title card note text' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match "NOTE_DISPLAY_MODE_STORAGE_KEY = 'Yuji\.noteDisplayMode\.v1'"
+        $template | Should Match 'id="noteDisplayToggleButton"[^>]*>备注</button>\s*<button type="button" id="cloudSettingsButton"'
+        $template | Should Match 'id="pinnedNotesLayer" class="pinned-notes-layer"'
+        $template | Should Match '\.note-tooltip-pinned \{[\s\S]*?pointer-events: auto'
+        $template | Should Match 'noteDisplayToggleButton\.textContent = pinned \? ''隐藏'' : ''备注'''
+        $template | Should Match "localStorage\.setItem\(NOTE_DISPLAY_MODE_STORAGE_KEY, noteDisplayMode\)"
+        $template | Should Match "panel\.className = 'note-tooltip note-tooltip-pinned'"
+        $template | Should Match 'body\.textContent = note\.note'
+        $template | Should Not Match 'innerHTML\s*=\s*note\.note'
+        $template | Should Match "sessionList\.querySelectorAll\('\.title-group-head\.has-note, \.session-btn\.has-note'\)"
+        $template | Should Match 'if \(noteDisplayMode === ''pinned''\) return;'
+    }
+
+    It 'keeps pinned notes aligned to visible title cards and refreshed by layout changes' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match 'function positionPinnedNote\(panel, anchor\)[\s\S]*?anchorRect\.right \+ gap'
+        $template | Should Match 'function isPinnedNoteAnchorVisible\(element\)[\s\S]*?rect\.bottom > listRect\.top[\s\S]*?rect\.top < listRect\.bottom'
+        $template | Should Match 'function schedulePinnedNotesRefresh\(\)[\s\S]*?requestAnimationFrame'
+        $template | Should Match "sessionList\.addEventListener\('scroll', schedulePinnedNotesRefresh, \{ passive: true \}\)"
+        $template | Should Match "window\.addEventListener\('resize',[\s\S]*?schedulePinnedNotesRefresh\(\)"
+        $template | Should Match 'setTitleGroupCollapsed\(workspace, group, nextCollapsed\);\s*if \(typeof schedulePinnedNotesRefresh'
+        $template | Should Match 'syncPaneCollapseState\(\)[\s\S]*?schedulePinnedNotesRefresh\(\)'
+        $template | Should Match 'renderSessionList\(skipViewerSync\)[\s\S]*?clearPinnedNotes\(\)[\s\S]*?schedulePinnedNotesRefresh\(\)'
+    }
+
     AfterAll {
         Remove-Item -LiteralPath $script:v032TempRoot -Force -Recurse -ErrorAction SilentlyContinue
     }
