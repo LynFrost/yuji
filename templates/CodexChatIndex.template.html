@@ -482,23 +482,31 @@
       right: 8px;
       bottom: 8px;
       z-index: 2;
-      width: 24px;
-      height: 24px;
-      border: 0;
+      width: 26px;
+      height: 26px;
+      border: 1px solid rgba(143,77,31,.34);
       border-radius: 8px;
-      background: transparent;
-      color: var(--muted);
+      background: rgba(255,250,242,.92);
+      color: var(--accent);
+      box-shadow: 0 1px 3px rgba(60,44,27,.10);
       font: inherit;
       font-size: 18px;
       line-height: 1;
       cursor: pointer;
-      transition: transform .15s ease, background .15s ease, color .15s ease;
+      transition: transform .15s ease, background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
     }
-    .title-group-toggle:hover,
+    .title-group-toggle:hover {
+      border-color: rgba(143,77,31,.62);
+      background: var(--accent-soft);
+      color: #6f3813;
+      box-shadow: 0 2px 6px rgba(60,44,27,.16);
+    }
     .title-group-toggle:focus-visible {
-      background: rgba(143,77,31,.10);
-      color: var(--accent);
-      outline: none;
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: #6f3813;
+      outline: 2px solid rgba(143,77,31,.28);
+      outline-offset: 2px;
     }
     .title-group.collapsed .title-group-toggle {
       transform: rotate(-90deg);
@@ -3132,6 +3140,21 @@
       } catch (_) {}
     }
 
+    function toggleTitleGroup(groupNode, groupToggle, workspace, group) {
+      if (!groupNode || !hasMultipleSessionBranches(group)) return;
+      const nextCollapsed = !groupNode.classList.contains('collapsed');
+      groupNode.classList.toggle('collapsed', nextCollapsed);
+      const expanded = !nextCollapsed;
+      if (groupToggle) {
+        groupToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        groupToggle.title = expanded ? '收起同标题会话' : '展开同标题会话';
+      }
+      const groupHead = groupNode.querySelector('.title-group-head');
+      if (groupHead) groupHead.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      setTitleGroupCollapsed(workspace, group, nextCollapsed);
+      if (typeof schedulePinnedNotesRefresh === 'function') schedulePinnedNotesRefresh();
+    }
+
     function formatSessionMeta(session) {
       if (!session) return '';
       const parts = [];
@@ -4488,30 +4511,27 @@
           '<span class="title-group-title">' + escapeHtml(truncateDisplayText(group.title, 300)) + '</span>' +
           '<span class="title-group-meta">' + escapeHtml(formatTitleGroupMeta(group)) + '</span>';
         groupHead.onmousedown = preventTitleButtonMouseFocus;
-        groupHead.onclick = async () => {
-          selectedWorkspaceId = current.workspace.id;
-          await selectSessionFromTitlePane(group.sessions[0]);
-        };
         groupHeader.appendChild(groupHead);
 
         if (hasMultipleSessionBranches(group)) {
           groupHeader.classList.add('has-toggle');
           const collapsed = isTitleGroupCollapsed(current.workspace, group);
           groupNode.classList.toggle('collapsed', collapsed);
+          groupHead.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
           const groupToggle = document.createElement('button');
           groupToggle.type = 'button';
           groupToggle.className = 'title-group-toggle';
           groupToggle.textContent = '⌄';
           groupToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
           groupToggle.title = collapsed ? '展开同标题会话' : '收起同标题会话';
+          groupHead.onclick = event => {
+            event.preventDefault();
+            toggleTitleGroup(groupNode, groupToggle, current.workspace, group);
+          };
           groupToggle.onclick = event => {
             event.preventDefault();
             event.stopPropagation();
-            const nextCollapsed = !groupNode.classList.contains('collapsed');
-            groupNode.classList.toggle('collapsed', nextCollapsed);
-            groupToggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
-            groupToggle.title = nextCollapsed ? '展开同标题会话' : '收起同标题会话';
-            setTitleGroupCollapsed(current.workspace, group, nextCollapsed);
+            toggleTitleGroup(groupNode, groupToggle, current.workspace, group);
           };
           groupHeader.appendChild(groupToggle);
           const sessionRows = document.createElement('div');
@@ -4531,6 +4551,11 @@
             sessionRows.appendChild(btn);
           });
           groupNode.appendChild(sessionRows);
+        } else {
+          groupHead.onclick = async () => {
+            selectedWorkspaceId = current.workspace.id;
+            await selectSessionFromTitlePane(group.sessions[0]);
+          };
         }
         groupNode.insertBefore(groupHeader, groupNode.firstChild);
         sessionList.appendChild(groupNode);
