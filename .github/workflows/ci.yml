@@ -83,11 +83,10 @@ jobs:
             throw "$($result.FailedCount) Pester test(s) failed."
           }
 
-  pester-full-diagnostic:
-    name: Full Pester diagnostic
+  pester-full:
+    name: Pester full suite
     runs-on: windows-latest
     timeout-minutes: 30
-    continue-on-error: true
 
     steps:
       - name: Checkout
