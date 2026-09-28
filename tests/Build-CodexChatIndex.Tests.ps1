@@ -9140,7 +9140,7 @@ Describe 'V0.32 managed images with V0.33 title and note interactions' {
         $template | Should Match "\} else \{\s*groupHead\.onclick = async \(\) => \{[\s\S]*?selectSessionFromTitlePane\(group\.sessions\[0\]\)"
         $template | Should Not Match 'if \(hasMultipleSessionBranches\(group\)\)[\s\S]{0,900}?selectSessionFromTitlePane\(group\.sessions\[0\]\)'
         $template | Should Match 'groupHead\.setAttribute\(''aria-expanded'''
-        $template | Should Match '\.title-group-toggle \{[\s\S]*?border: 1px solid rgba\(143,77,31,\.34\)'
+        $template | Should Match '\.title-toggle-button \{[\s\S]*?border: 1px solid rgba\(143,77,31,\.34\)'
     }
 
     It 'adds browser-only pinned note mode without changing title card note text' {
@@ -9168,9 +9168,60 @@ Describe 'V0.32 managed images with V0.33 title and note interactions' {
         $template | Should Match 'function schedulePinnedNotesRefresh\(\)[\s\S]*?requestAnimationFrame'
         $template | Should Match "sessionList\.addEventListener\('scroll', schedulePinnedNotesRefresh, \{ passive: true \}\)"
         $template | Should Match "window\.addEventListener\('resize',[\s\S]*?schedulePinnedNotesRefresh\(\)"
-        $template | Should Match 'setTitleGroupCollapsed\(workspace, group, nextCollapsed\);\s*if \(typeof schedulePinnedNotesRefresh'
+        $template | Should Match 'setTitleGroupCollapsed\(workspace, group, nextCollapsed\);\s*syncTitleGroupsToggleAllButton\(\);\s*if \(typeof schedulePinnedNotesRefresh'
         $template | Should Match 'syncPaneCollapseState\(\)[\s\S]*?schedulePinnedNotesRefresh\(\)'
         $template | Should Match 'renderSessionList\(skipViewerSync\)[\s\S]*?clearPinnedNotes\(\)[\s\S]*?schedulePinnedNotesRefresh\(\)'
+    }
+
+    It 'adds the V0.34 bulk title-group toggle immediately before the title sort menu' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match 'id="toggleAllTitleGroupsButton"[^>]*class="title-toggle-button title-groups-toggle-all"[^>]*disabled>⌄</button>\s*<details class="sort-menu">'
+        $template | Should Match '\.title-toggle-button \{[\s\S]*?width: 26px;[\s\S]*?height: 26px;[\s\S]*?border: 1px solid rgba\(143,77,31,\.34\)'
+        $template | Should Match '\.title-group-toggle \{\s*position: absolute;[\s\S]*?right: 8px;[\s\S]*?bottom: 8px;'
+        $template | Should Match '\.title-groups-toggle-all \{\s*flex: 0 0 auto;'
+        $template | Should Match '\.title-group\.collapsed \.title-group-toggle,\s*\.title-groups-toggle-all\.is-collapsed \{\s*transform: rotate\(-90deg\);'
+        $template | Should Match '\.title-toggle-button:disabled \{[\s\S]*?opacity: \.42;[\s\S]*?cursor: default;'
+        $template | Should Match "groupToggle\.className = 'title-toggle-button title-group-toggle'"
+    }
+
+    It 'scopes V0.34 bulk collapse to currently rendered multi-branch groups and persists them in one batch' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match "function getVisibleMultiTitleGroupNodes\(\)[\s\S]*?querySelectorAll\('\.title-group\[data-collapse-key\]'\)"
+        $template | Should Match 'groupNode\.dataset\.collapseKey = getTitleGroupCollapseKey\(current\.workspace, group\)'
+        $bulkFunction = [regex]::Match(
+            $template,
+            'function toggleAllVisibleTitleGroups\(\) \{[\s\S]*?\n    \}\n\n    function toggleTitleGroup'
+        ).Value
+        $bulkFunction | Should Not BeNullOrEmpty
+        $bulkFunction | Should Match 'const allCollapsed = groups\.every\(groupNode => groupNode\.classList\.contains\(''collapsed''\)\)'
+        $bulkFunction | Should Match 'const targetCollapsed = !allCollapsed'
+        $bulkFunction | Should Match "groupNode\.classList\.toggle\('collapsed', targetCollapsed\)"
+        $bulkFunction | Should Match 'if \(targetCollapsed\) state\[key\] = true;\s*else delete state\[key\];'
+        ([regex]::Matches($bulkFunction, 'readTitleGroupCollapseState\(\)')).Count | Should Be 1
+        ([regex]::Matches($bulkFunction, 'localStorage\.setItem\(TITLE_GROUP_COLLAPSE_STORAGE_KEY')).Count | Should Be 1
+        ([regex]::Matches($bulkFunction, 'schedulePinnedNotesRefresh\(\)')).Count | Should Be 1
+        $bulkFunction | Should Not Match 'toggleTitleGroup\('
+        $bulkFunction | Should Not Match 'setTitleGroupCollapsed\('
+    }
+
+    It 'derives the V0.34 top arrow state from the current rendered groups and disables it when none exist' {
+        $template = Get-Content -LiteralPath (Join-Path $projectRoot 'templates\CodexChatIndex.template.html') -Raw
+        $template | Should Match 'function syncTitleGroupsToggleAllButton\(\)[\s\S]*?if \(!groups\.length\)[\s\S]*?disabled = true'
+        $template | Should Match "setAttribute\('aria-label', '当前没有可收起的母标题'\)"
+        $template | Should Match "const label = allCollapsed \? '展开全部母标题' : '收起全部母标题'"
+        $template | Should Match "setAttribute\('aria-expanded', allCollapsed \? 'false' : 'true'\)"
+        $template | Should Match "toggleAllTitleGroupsButton\.classList\.toggle\('is-collapsed', allCollapsed\)"
+        $template | Should Match "toggleAllTitleGroupsButton\.addEventListener\('click', toggleAllVisibleTitleGroups\)"
+        $template | Should Match 'renderSessionList\(skipViewerSync\)[\s\S]*?sessionList\.innerHTML = '''';\s*clearPinnedNotes\(\);\s*syncTitleGroupsToggleAllButton\(\);'
+        $template | Should Match 'sessionList\.appendChild\(groupNode\);\s*\}\);\s*syncTitleGroupsToggleAllButton\(\);\s*schedulePinnedNotesRefresh\(\);'
+    }
+
+    It 'ignores Python cache artifacts without hiding Python source files' {
+        $gitignore = Get-Content -LiteralPath (Join-Path $projectRoot '.gitignore')
+        $gitignore | Should Contain 'temp/'
+        $gitignore | Should Contain '__pycache__/'
+        $gitignore | Should Contain '*.pyc'
+        $gitignore | Should Not Contain '*.py'
     }
 
     AfterAll {
