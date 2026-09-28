@@ -1897,11 +1897,11 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         $rollbackDetail = Get-Content -LiteralPath $rollbackDetailPath -Raw | ConvertFrom-Json -Depth 100
         $detailText = $rollbackDetail | ConvertTo-Json -Depth 100 -Compress
 
-        $rollbackSession.createdLocal | Should Be '2026-05-04 16:02:37'
-        $rollbackSession.updatedLocal | Should Be '2026-05-04 16:03:10'
+        $rollbackSession.createdLocal | Should Be ([DateTimeOffset]::Parse('2026-05-04T08:02:37.856Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
+        $rollbackSession.updatedLocal | Should Be ([DateTimeOffset]::Parse('2026-05-04T08:03:10.100Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
         $rollbackSession.userCount | Should Be 2
         $rollbackSession.assistantCount | Should Be 2
-        @($rollbackDetail.events | Where-Object { $_.kind -eq 'user' })[1].timestampLocal | Should Be '2026-05-04 16:02:57'
+        @($rollbackDetail.events | Where-Object { $_.kind -eq 'user' })[1].timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-05-04T08:02:57.576Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
         $detailText | Should Match 'V0\.05 已实现并验收完成'
         $detailText | Should Match '现在给我0\.06版本的修改文档'
         $detailText | Should Not Match '会影响，但主要是交互行为影响'
@@ -1934,7 +1934,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
         $forkSession | Should Not BeNullOrEmpty
         $forkSession.id | Should Be $forkHeadSessionId
-        $forkSession.createdLocal | Should Be '2026-04-25 17:00:00'
+        $forkSession.createdLocal | Should Be ([DateTimeOffset]::Parse('2026-04-25T09:00:00Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
 
         $forkWorkspace = @(
             $script:index.workspaces |
@@ -1961,12 +1961,12 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
     It 'stores render mode hints for assistant final events' {
         $detail | Should Not BeNullOrEmpty
-        @($detail.events |
-            Where-Object { $_.kind -eq 'assistant_final' } |
-            ForEach-Object {
-                $_.renderMode | Should Be 'deterministic_markdown'
-                $_.rawText | Should Not BeNullOrEmpty
-            }) | Should Not BeNullOrEmpty
+        $finalEvents = @($detail.events | Where-Object { $_.kind -eq 'assistant_final' })
+        @($finalEvents).Count | Should BeGreaterThan 0
+        $finalEvents | ForEach-Object {
+            $_.renderMode | Should Be 'deterministic_markdown'
+            $_.rawText | Should Not BeNullOrEmpty
+        }
     }
 
     It 'keeps rawText on exported reader events' {
@@ -2019,6 +2019,9 @@ const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n
 if (!match) {
   throw new Error("reader render helpers not found");
 }
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const result = {
   bulletList: renderEvent({
@@ -2063,6 +2066,9 @@ const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n
 if (!match) {
   throw new Error("reader render helpers not found");
 }
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const tableText = [
   "| 总弹力 F | 总行程 S |",
@@ -2117,6 +2123,9 @@ const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n
 if (!match) {
   throw new Error("reader render helpers not found");
 }
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const result = {
   separated: renderDeterministicMarkdown("1. first\n\n2. second\n\n3. third"),
@@ -2152,6 +2161,9 @@ const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n
 if (!match) {
   throw new Error("reader render helpers not found");
 }
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const markup = buildReaderMarkup([
   { kind: "user", timestampLocal: "2026-04-25 12:00:00", rawText: "question" },
@@ -2180,6 +2192,9 @@ const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n
 if (!match) {
   throw new Error("reader render helpers not found");
 }
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const sample = "**3. 你没在 class CTaskCounter 下面看到那些函数，是因为它们藏在宏里**";
 const result = {
@@ -2352,6 +2367,9 @@ const localStorage = {
   getItem(key) { return Object.prototype.hasOwnProperty.call(saved, key) ? saved[key] : null; },
   setItem(key, value) { saved[key] = value; }
 };
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const initial = {
   workspaceHidden: workspacePane.classList["is-collapsed"] === true,
@@ -2538,6 +2556,9 @@ const element = {
   removeAttribute(name) { delete attrs[name]; }
 };
 const notesState = { notes: new Map([["group:abc", { note: "备注第一行\n备注第二行" }]]) };
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 classes.add("active");
 applyNoteMetadata(element, { key: "group:abc", type: "group", title: "原始标题" }, "原始标题");
@@ -2809,6 +2830,9 @@ const match = html.match(/function escapeHtml\(value\) \{[\s\S]*?\n    \}(?=\n\n
 if (!match) {
   throw new Error("reader render helpers not found");
 }
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const userMarkup = renderEvent({
   kind: "user",
@@ -4020,6 +4044,9 @@ var messageCopyTexts = new Map();
 var messageCopySerial = 0;
 var lazyDetailRenderers = new Map();
 var lazyDetailSerial = 0;
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 
 function capture(query, mode = "all") {
@@ -4094,6 +4121,9 @@ var messageCopyTexts = new Map();
 var messageCopySerial = 0;
 var lazyDetailRenderers = new Map();
 var lazyDetailSerial = 0;
+var noteDisplayMode = "hover";
+var pinnedNotesLayer = null;
+var pinnedNotesFrame = 0;
 eval(match[0]);
 const markup = buildReaderMarkup([
   { kind: "user", questionKey: "question-1", rawText: "first question" },
@@ -7014,10 +7044,14 @@ for path in ["/", "/CodexChatIndex.html", f"/{module.ROOT.name}/CodexChatIndex.h
     module.Handler.do_GET(handler)
     results[path] = handler.calls
 
-print(json.dumps({"entryPath": module.ENTRY_PATH, "results": results}, ensure_ascii=False))
+print(json.dumps({
+    "entryPath": module.ENTRY_PATH,
+    "legacyRootPath": f"/{module.ROOT.name}/CodexChatIndex.html",
+    "results": results
+}, ensure_ascii=False))
 '@
         $result = python -c $python $serverScript | ConvertFrom-Json -Depth 20
-        foreach ($path in @('/', '/CodexChatIndex.html', '/CodexChatIndex/CodexChatIndex.html')) {
+        foreach ($path in @('/', '/CodexChatIndex.html', [string]$result.legacyRootPath)) {
             $calls = @($result.results.$path)
             (($calls | ConvertTo-Json -Depth 5) -match '"super"') | Should Be $false
             @($calls | Where-Object { $_[0] -eq 'status' -and $_[1] -eq 302 }).Count | Should Be 1
@@ -7690,7 +7724,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
     It 'sets a recognizable title on the opened cmd window' {
         $openCmd = Get-Content -LiteralPath (Join-Path $projectRoot 'Open-CodexChatIndex.cmd') -Raw
-        $openCmd | Should Match '(?mi)^title Open-CodexChatIndex V0\.31 - Local Server Running'
+        $openCmd | Should Match '(?mi)^title Open-CodexChatIndex V0\.34 - Local Server Running'
         $openCmd | Should Match "root / 'temp'"
         $openCmd | Should Match "root\.parent / '\\u8fd0\\u884c\\u6570\\u636e'"
         $openCmd | Should Match "root\.parent / '\\u5916\\u90e8\\u804a\\u5929\\u8bb0\\u5f55'"
@@ -8277,20 +8311,21 @@ Describe 'V0.31 continued-session time and Codex event compatibility' {
         $taskComplete = @($v031Time.Detail.events | Where-Object { $_.kind -eq 'system' -and $_.summary -eq 'task_complete' } | Select-Object -First 1)
 
         $historicalUser.Count | Should Be 1
-        $historicalUser[0].timestampLocal | Should Be '2026-07-18 22:53:45'
+        $historicalUser[0].timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-07-18T14:53:45Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
         $historicalFinal.Count | Should Be 1
-        $historicalFinal[0].timestampLocal | Should Be '2026-07-18 23:00:39'
+        $historicalFinal[0].timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-07-18T15:00:39Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
         $historicalProcess[0].timestampLocal | Should Be ''
-        $taskStarted.timestampLocal | Should Be '2026-07-18 22:53:45'
-        $taskComplete.timestampLocal | Should Be '2026-07-18 23:00:39'
-        @($v031Time.Detail.events | Where-Object timestampLocal -eq '2026-07-19 10:53:04').Count | Should Be 0
+        $taskStarted.timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-07-18T14:53:45Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
+        $taskComplete.timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-07-18T15:00:39Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
+        $fixedTopLocal = [DateTimeOffset]::Parse('2026-07-19T02:53:04Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        @($v031Time.Detail.events | Where-Object timestampLocal -eq $fixedTopLocal).Count | Should Be 0
     }
 
     It 'prefers item-level timestamps even when the fixed top timestamp is inside the task range' {
         $question = @($v031Time.Detail.events | Where-Object rawText -eq 'In-range fixed timestamp question' | Select-Object -First 1)
         $answer = @($v031Time.Detail.events | Where-Object rawText -eq 'In-range fixed timestamp answer' | Select-Object -First 1)
-        $question.timestampLocal | Should Be '2026-07-18 18:05:00'
-        $answer.timestampLocal | Should Be '2026-07-18 18:30:00'
+        $question.timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-07-18T10:05:00Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
+        $answer.timestampLocal | Should Be ([DateTimeOffset]::Parse('2026-07-18T10:30:00Z').ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
     }
 
     It 'restores visible completed AgentMessage records without response-only summaries' {
