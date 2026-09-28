@@ -2386,6 +2386,7 @@ const localStorage = {
 var noteDisplayMode = "hover";
 var pinnedNotesLayer = null;
 var pinnedNotesFrame = 0;
+function schedulePinnedNotesRefresh() {}
 eval(match[0]);
 const initial = {
   workspaceHidden: workspacePane.classList["is-collapsed"] === true,
@@ -8671,21 +8672,21 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $first.notice | Should Match '缓存版本不兼容'
         $upgradedCache.cacheVersion | Should Be 5
         $upgradedCache.builderVersion | Should Be 'V0.34'
-        $upgradedCache.parserRevision | Should Be 4
+        $upgradedCache.parserRevision | Should Be 5
         $second.mode | Should Be 'Incremental'
         $second.noChange | Should Be $true
     }
 
-    It 'rebuilds a V0.32 parser revision 3 cache once for legacy escaped image recovery' {
-        $cacheRoot = Join-Path $script:v031TempRoot 'v032-parser-revision-4-upgrade'
+    It 'rebuilds a parser revision 4 cache once for escaped image punctuation recovery' {
+        $cacheRoot = Join-Path $script:v031TempRoot 'v034-parser-revision-5-upgrade'
         $outputPath = Join-Path $cacheRoot 'CodexChatIndex.html'
         $fixtureRoot = Join-Path $here 'fixtures\codex-v031-events'
         & $buildScript -CodexHome $fixtureRoot -OutputPath $outputPath -DataRoot $cacheRoot -RefreshMode Full -JsonSummary | Out-Null
         $sourceRoot = Get-TestSourceRoot $cacheRoot
         $cachePath = Join-Path $sourceRoot 'CodexChatIndex.cache.json'
         $cache = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json -Depth 100
-        $cache.builderVersion = 'V0.32'
-        $cache.parserRevision = 3
+        $cache.builderVersion = 'V0.34'
+        $cache.parserRevision = 4
         Set-Content -LiteralPath $cachePath -Value ($cache | ConvertTo-Json -Depth 100) -Encoding UTF8
 
         $first = (& $buildScript -CodexHome $fixtureRoot -OutputPath $outputPath -DataRoot $cacheRoot -RefreshMode Incremental -JsonSummary | Select-Object -Last 1) | ConvertFrom-Json
@@ -8695,7 +8696,7 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $first.mode | Should Be 'Full'
         $first.notice | Should Match '缓存版本不兼容'
         $upgradedCache.builderVersion | Should Be 'V0.34'
-        $upgradedCache.parserRevision | Should Be 4
+        $upgradedCache.parserRevision | Should Be 5
         $second.mode | Should Be 'Incremental'
         $second.noChange | Should Be $true
     }
@@ -8709,7 +8710,7 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $v031Events.Html | Should Match '<span class="version-badge">V0\.34</span>'
         $v031Events.Cache.cacheVersion | Should Be 5
         $v031Events.Cache.builderVersion | Should Be 'V0.34'
-        $v031Events.Cache.parserRevision | Should Be 4
+        $v031Events.Cache.parserRevision | Should Be 5
     }
 
     AfterAll {
@@ -8908,6 +8909,7 @@ Describe 'V0.32 managed images with V0.34 title and note interactions' {
     It 'restores Markdown-escaped underscores in legacy relative image filenames' {
         $user = @($v032FirstDetail.events | Where-Object kind -eq 'user' | Select-Object -First 1)[0]
         $user.rawText | Should Match '微信图片\\_20260908185726\\_8363\\_7\.png'
+        (Get-Content -LiteralPath $buildScript -Raw) | Should Match '、，。:：'
         $managed = @($user.images | Where-Object type -eq 'managed')
         @($managed | Where-Object { $_.assetId -eq $v032ExpectedLocalAsset }).Count | Should Be 2
     }
