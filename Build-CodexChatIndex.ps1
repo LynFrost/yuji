@@ -3842,7 +3842,7 @@ $otherSearchOutput = if (-not $useSourceDataLayout -and $outputPathWasProvided) 
 } else {
     Join-Path $effectiveDataRoot 'CodexChatIndex.search.other.json'
 }
-$builderVersion = "V0.32"
+$builderVersion = "V0.33"
 $parserRevision = 4
 $templatePath = Join-Path $PSScriptRoot 'templates\CodexChatIndex.template.html'
 $indexRelativePath = Convert-ToRelativeWebPath -FromDirectory $outputDir -ToPath $dataOutput

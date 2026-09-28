@@ -24,11 +24,11 @@
 - 校正续接或恢复会话中明显错误的固定消息时间，同时保持原始事件顺序和正文不变。
 - 兼容新版 Codex `item_completed` 可见回答、过程说明和工具记录，并避免把内部续接摘要显示成回答。
 - 支持只看用户提问，也支持查看完整对话、工具过程、系统事件和最终回答。
-- 支持为项目组或单个会话添加本地备注。
+- 支持为项目组或单个会话添加本地备注；V0.33 可在顶部通过“备注 / 隐藏”切换悬浮与常驻显示，显示偏好只保存在当前浏览器。
 - 支持复制消息全文、复制当前会话路径、复制继续会话命令。
 - 支持导出当前会话为 Markdown。
 - 支持输入图片记录的缩略图和预览；V0.32 会把成功识别的 PNG/JPEG/GIF/WebP/AVIF 首次快照保存到 `运行数据/CodexChatIndex.images/`，后续即使原图片移动、删除或同路径被替换，历史会话仍按首次托管内容显示。
-- 同标题下存在多个子会话时，可通过母标题右下角箭头收起/展开；默认展开，折叠状态仅保存在当前浏览器 `localStorage`，不会上传到 WebDAV。
+- V0.33 中，同标题下存在多个子会话时，点击母标题主体或右下角带边框箭头都会收起/展开，不再自动打开第一条子会话；单会话标题仍直接打开，折叠状态仅保存在当前浏览器 `localStorage`。
 - 支持增量刷新、当前会话快刷和全量重建。
 - 可选支持 WebDAV 多端同步，默认适配坚果云；每台设备只写自己的云端目录。
 - 本机 Codex、Claude 只上传，其他设备的云端来源只下载并保持只读。
@@ -133,7 +133,7 @@ WebDAV 使用 HTTPS 传输，但 V0.32 没有端到端加密。聊天正文、�
 ├── Build-CodexChatIndex.ps1        # 解析 Codex / Claude 记录并生成索引
 ├── CodexChatIndexServer.py         # 本地 HTTP 服务和刷新 API
 ├── Open-CodexChatIndex.cmd         # 一键启动本地服务并打开浏览器
-├── VERSION_V0.32.txt               # 当前版本标记
+├── VERSION_V0.33.txt               # 当前版本标记
 ├── templates/
 │   └── CodexChatIndex.template.html
 ├── webdav_sync/
@@ -177,6 +177,7 @@ Install-Module Pester -Scope CurrentUser
 - 图片识别不会因为地址是 `localhost`、`127.0.0.1`、局域网或内网 URL 就自动排除；只要该 URL 已被语迹识别为图片且刷新时可以访问，其图片内容就可能被保存到本机托管库，并在启用 WebDAV 时自动上传到你配置的 WebDAV。图片抓取不会携带浏览器 Cookie、浏览器登录态或浏览器认证信息。
 - 单张托管图片上限为 30 MiB；仅支持实际内容为 PNG、JPEG、GIF、WebP、AVIF 的图片，SVG 不进入托管图片库。
 - 搜索历史只保存在浏览器的 `localStorage` 键 `yuji-search-history-v1`；可在搜索历史浮层中单条删除或清空。
+- V0.33 的备注显示模式只保存在浏览器的 `localStorage` 键 `Yuji.noteDisplayMode.v1`，不会写入备注数据，也不会上传 WebDAV。
 - 当前仓库的 `.gitignore` 已忽略 `temp/`。
 - 开源前建议再次运行敏感信息扫描，确认已跟踪文件里没有私人内容。
 
