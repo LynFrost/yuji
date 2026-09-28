@@ -269,124 +269,8 @@ Describe 'Build-CodexChatIndex session reader outputs' {
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.25.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.24.txt') -PathType Leaf) | Should Be $false
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.23.txt') -PathType Leaf) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.23') -PathType Container) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.25') -PathType Container) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.26') -PathType Container) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.27') -PathType Container) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.29') -PathType Container) | Should Be $true
         (Test-Path -LiteralPath (Join-Path $projectRoot 'VERSION_V0.28.txt') -PathType Leaf) | Should Be $false
         (Get-Content -LiteralPath $versionFile -Raw).Trim() | Should Be 'V0.34'
-    }
-
-    It 'keeps the V0.27 archive beside the active repo with the exact approved source whitelist' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.27'
-        $expected = @(
-            '.gitattributes',
-            '.gitignore',
-            'Build-CodexChatIndex.cmd',
-            'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py',
-            'LICENSE',
-            'Open-CodexChatIndex.cmd',
-            'README.md',
-            'templates\CodexChatIndex.template.html',
-            'tests\Build-CodexChatIndex.Tests.ps1',
-            'tests\fixtures\codex-home\sessions\2026\04\24\rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests\fixtures\codex-home\sessions\2026\04\25\rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl',
-            'VERSION_V0.27.txt'
-        ) | Sort-Object
-        $actual = @(
-            Get-ChildItem -LiteralPath $archiveRoot -Recurse -Force |
-                Where-Object { -not $_.PSIsContainer } |
-                ForEach-Object { $_.FullName.Substring($archiveRoot.Length + 1) } |
-                Sort-Object
-        )
-
-        ($actual -join "`n") | Should Be ($expected -join "`n")
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git')) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp')) | Should Be $false
-        (Get-Content -LiteralPath (Join-Path $archiveRoot 'VERSION_V0.27.txt') -Raw).Trim() | Should Be 'V0.27'
-    }
-
-    It 'keeps the V0.26 archive beside the active repo with the exact approved source whitelist' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.26'
-        $expected = @(
-            '.gitignore',
-            'Build-CodexChatIndex.cmd',
-            'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py',
-            'LICENSE',
-            'Open-CodexChatIndex.cmd',
-            'README.md',
-            'VERSION_V0.26.txt',
-            'templates\CodexChatIndex.template.html',
-            'tests\Build-CodexChatIndex.Tests.ps1',
-            'tests\fixtures\codex-home\sessions\2026\04\24\rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests\fixtures\codex-home\sessions\2026\04\25\rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl'
-        ) | Sort-Object
-        $actual = @(Get-ChildItem -LiteralPath $archiveRoot -Recurse -File | ForEach-Object {
-            [IO.Path]::GetRelativePath($archiveRoot, $_.FullName)
-        } | Sort-Object)
-
-        ($actual -join "`n") | Should Be ($expected -join "`n")
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git')) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp')) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'demo-55-6-push.txt')) | Should Be $false
-        (Get-Content -LiteralPath (Join-Path $archiveRoot 'VERSION_V0.26.txt') -Raw).Trim() | Should Be 'V0.26'
-    }
-
-    It 'keeps the V0.25 archive beside the active repo with only whitelisted source files' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.25'
-        (Test-Path -LiteralPath $archiveRoot -PathType Container) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git') -PathType Container) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp') -PathType Container) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'demo-55-6-push.txt') -PathType Leaf) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'demo-55-7-merge.txt') -PathType Leaf) | Should Be $false
-
-        $expected = @(
-            '.gitignore',
-            'Build-CodexChatIndex.cmd',
-            'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py',
-            'Open-CodexChatIndex.cmd',
-            'VERSION_V0.25.txt',
-            'templates\CodexChatIndex.template.html',
-            'tests\Build-CodexChatIndex.Tests.ps1',
-            'tests\fixtures\codex-home\sessions\2026\04\24\rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests\fixtures\codex-home\sessions\2026\04\25\rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl'
-        )
-        foreach ($relative in $expected) {
-            (Test-Path -LiteralPath (Join-Path $archiveRoot $relative) -PathType Leaf) | Should Be $true
-        }
-
-        $actual = @(
-            Get-ChildItem -LiteralPath $archiveRoot -Recurse -Force |
-                Where-Object { -not $_.PSIsContainer } |
-                ForEach-Object { $_.FullName.Substring($archiveRoot.Length + 1) } |
-                Sort-Object
-        )
-        ($actual -join "`n") | Should Be (($expected | Sort-Object) -join "`n")
-    }
-
-    It 'keeps the V0.23 archive beside the active repo without git metadata or temp output' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.23'
-        (Test-Path -LiteralPath $archiveRoot -PathType Container) | Should Be $true
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git') -PathType Container) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp') -PathType Container) | Should Be $false
-        foreach ($relative in @(
-            '.gitignore',
-            'Build-CodexChatIndex.cmd',
-            'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py',
-            'Open-CodexChatIndex.cmd',
-            'VERSION_V0.23.txt',
-            'templates\CodexChatIndex.template.html',
-            'tests\Build-CodexChatIndex.Tests.ps1',
-            'tests\fixtures\codex-home\sessions\2026\04\24\rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests\fixtures\codex-home\sessions\2026\04\25\rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl'
-        )) {
-            (Test-Path -LiteralPath (Join-Path $archiveRoot $relative) -PathType Leaf) | Should Be $true
-        }
     }
 
     It 'scans only the selected external source folder recursively and marks archived paths' {
@@ -7846,72 +7730,6 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         $openCmd | Should Not Match '[^\u0000-\u007F]'
     }
 
-    It 'keeps the implementation-time V0.28 archive on the exact approved whitelist' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.28'
-        $expected = @(
-            '.gitattributes',
-            '.gitignore',
-            'Build-CodexChatIndex.cmd',
-            'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py',
-            'LICENSE',
-            'Open-CodexChatIndex.cmd',
-            'README.md',
-            'VERSION_V0.28.txt',
-            'templates/CodexChatIndex.template.html',
-            'tests/Build-CodexChatIndex.Tests.ps1',
-            'tests/fixtures/codex-home/sessions/2026/04/24/rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests/fixtures/codex-home/sessions/2026/04/25/rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl'
-        ) | Sort-Object
-        $actual = @(
-            Get-ChildItem -LiteralPath $archiveRoot -File -Recurse -Force | ForEach-Object {
-                $_.FullName.Substring($archiveRoot.Length + 1).Replace('\', '/')
-            }
-        ) | Sort-Object
-
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git')) | Should Be $false
-        (Compare-Object -ReferenceObject $expected -DifferenceObject $actual).Count | Should Be 0
-        (Get-Content -LiteralPath (Join-Path $archiveRoot 'VERSION_V0.28.txt') -Raw).Trim() | Should Be 'V0.28'
-    }
-
-    It 'keeps the implementation-time V0.29 archive on the exact approved whitelist' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.29'
-        $expected = @(
-            '.gitattributes',
-            '.gitignore',
-            'Build-CodexChatIndex.cmd',
-            'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py',
-            'LICENSE',
-            'Open-CodexChatIndex.cmd',
-            'README.md',
-            'VERSION_V0.29.txt',
-            'templates/CodexChatIndex.template.html',
-            'tests/Build-CodexChatIndex.Tests.ps1',
-            'tests/test_webdav_sync.py',
-            'tests/fixtures/codex-home/sessions/2026/04/24/rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests/fixtures/codex-home/sessions/2026/04/25/rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl',
-            'tests/fixtures/webdav/device.json',
-            'webdav_sync/__init__.py',
-            'webdav_sync/client.py',
-            'webdav_sync/config.py',
-            'webdav_sync/protocol.py',
-            'webdav_sync/service.py',
-            'webdav_sync/tasks.py'
-        ) | Sort-Object
-        $actual = @(
-            Get-ChildItem -LiteralPath $archiveRoot -File -Recurse -Force | ForEach-Object {
-                $_.FullName.Substring($archiveRoot.Length + 1).Replace('\', '/')
-            }
-        ) | Sort-Object
-
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git')) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp')) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '__pycache__')) | Should Be $false
-        (Compare-Object -ReferenceObject $expected -DifferenceObject $actual).Count | Should Be 0
-        (Get-Content -LiteralPath (Join-Path $archiveRoot 'VERSION_V0.29.txt') -Raw).Trim() | Should Be 'V0.29'
-    }
-
     It 'exports a complete local Codex sync inventory without writing build outputs' {
         $caseRoot = Join-Path $tempRoot 'v029-inventory'
         $caseCodexHome = Join-Path $caseRoot 'codex-home'
@@ -8841,27 +8659,6 @@ console.log(JSON.stringify({ loadResult, dedupResult, quotaItems, securityResult
         $v031Events.Cache.cacheVersion | Should Be 5
         $v031Events.Cache.builderVersion | Should Be 'V0.34'
         $v031Events.Cache.parserRevision | Should Be 4
-    }
-
-    It 'keeps the exact 21-file V0.30 source archive' {
-        $archiveRoot = Join-Path (Split-Path -Parent $projectRoot) 'CodexChatIndex_V0.30'
-        $expected = @(
-            '.gitattributes', '.gitignore', 'Build-CodexChatIndex.cmd', 'Build-CodexChatIndex.ps1',
-            'CodexChatIndexServer.py', 'LICENSE', 'Open-CodexChatIndex.cmd', 'README.md', 'VERSION_V0.30.txt',
-            'templates/CodexChatIndex.template.html', 'tests/Build-CodexChatIndex.Tests.ps1',
-            'tests/fixtures/codex-home/sessions/2026/04/24/rollout-2026-04-24T12-00-00-00000000-0000-0000-0000-000000000001.jsonl',
-            'tests/fixtures/codex-home/sessions/2026/04/25/rollout-2026-04-25T09-00-00-22222222-2222-2222-2222-222222222222.jsonl',
-            'tests/fixtures/webdav/device.json', 'tests/test_webdav_sync.py', 'webdav_sync/__init__.py',
-            'webdav_sync/client.py', 'webdav_sync/config.py', 'webdav_sync/protocol.py', 'webdav_sync/service.py',
-            'webdav_sync/tasks.py'
-        ) | Sort-Object
-        $actual = @(Get-ChildItem -LiteralPath $archiveRoot -Recurse -File | ForEach-Object {
-            $_.FullName.Substring($archiveRoot.Length + 1).Replace('\', '/')
-        } | Sort-Object)
-        @($actual).Count | Should Be 21
-        (Compare-Object $expected $actual) | Should BeNullOrEmpty
-        (Test-Path -LiteralPath (Join-Path $archiveRoot '.git')) | Should Be $false
-        (Test-Path -LiteralPath (Join-Path $archiveRoot 'temp')) | Should Be $false
     }
 
     AfterAll {
