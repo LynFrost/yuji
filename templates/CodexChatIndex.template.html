@@ -812,14 +812,6 @@
     .note-tooltip-pinned:focus-within {
       z-index: 2;
     }
-    .note-tooltip-label {
-      display: block;
-      margin-bottom: 6px;
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: .08em;
-    }
     .note-tooltip-body {
       font-size: 14px;
       line-height: 1.65;
@@ -1757,7 +1749,6 @@
       </form>
     </div>
     <div id="noteTooltip" class="note-tooltip" hidden>
-      <span class="note-tooltip-label">备注</span>
       <div id="noteTooltipBody" class="note-tooltip-body"></div>
     </div>
     <div id="pinnedNotesLayer" class="pinned-notes-layer"></div>
@@ -3642,12 +3633,8 @@
           panel = document.createElement('div');
           panel.className = 'note-tooltip note-tooltip-pinned';
           panel.dataset.noteKey = key;
-          const label = document.createElement('span');
-          label.className = 'note-tooltip-label';
-          label.textContent = '备注';
           const body = document.createElement('div');
           body.className = 'note-tooltip-body';
-          panel.appendChild(label);
           panel.appendChild(body);
           pinnedNotesLayer.appendChild(panel);
         }

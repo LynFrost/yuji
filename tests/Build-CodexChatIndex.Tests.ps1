@@ -9154,6 +9154,9 @@ Describe 'V0.32 managed images with V0.33 title and note interactions' {
         $template | Should Match "panel\.className = 'note-tooltip note-tooltip-pinned'"
         $template | Should Match 'body\.textContent = note\.note'
         $template | Should Not Match 'innerHTML\s*=\s*note\.note'
+        $template | Should Not Match '<span class="note-tooltip-label">备注</span>'
+        $template | Should Not Match "label\.className = 'note-tooltip-label'"
+        $template | Should Not Match "label\.textContent = '备注'"
         $template | Should Match "sessionList\.querySelectorAll\('\.title-group-head\.has-note, \.session-btn\.has-note'\)"
         $template | Should Match 'if \(noteDisplayMode === ''pinned''\) return;'
     }
