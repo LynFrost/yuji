@@ -63,31 +63,24 @@ jobs:
             throw 'VERSION_V0.34.txt does not contain V0.34.'
           }
 
-          $patterns = @(
-            '*streamlined V0.34 Yuji brand*',
-            '*V0.34 builder and visible version markers*',
-            '*single V0.34 HTML template source*',
-            '*V0.34 bulk title-group toggle*',
-            '*V0.34 bulk collapse*',
-            '*V0.34 top arrow state*',
-            '*Python cache artifacts*'
-          )
-
-          $total = 0
-          $failed = 0
-          foreach ($pattern in $patterns) {
-            Write-Host "Running Pester pattern: $pattern"
-            $result = Invoke-Pester -Script .\tests\Build-CodexChatIndex.Tests.ps1 -TestName $pattern -PassThru
-            if ($result.TotalCount -ne 1) {
-              throw "Expected exactly 1 test for pattern '$pattern', but Pester executed $($result.TotalCount)."
-            }
-            $total += $result.TotalCount
-            $failed += $result.FailedCount
+          $buildSource = Get-Content -LiteralPath .\Build-CodexChatIndex.ps1 -Raw
+          if ($buildSource -notmatch '\$builderVersion = "V0\.34"') {
+            throw 'Build-CodexChatIndex.ps1 is not on V0.34.'
           }
 
-          Write-Host "Verified $total current-version Pester tests."
-          if ($failed -gt 0) {
-            throw "$failed current-version Pester test(s) failed."
+          $openSource = Get-Content -LiteralPath .\Open-CodexChatIndex.cmd -Raw
+          if ($openSource -notmatch 'V0\.34') {
+            throw 'Open-CodexChatIndex.cmd is not on V0.34.'
+          }
+
+          $describeName = 'V0.32 managed images with V0.34 title and note interactions'
+          $result = Invoke-Pester -Script .\tests\Build-CodexChatIndex.Tests.ps1 -TestName $describeName -PassThru
+          if ($result.TotalCount -lt 1) {
+            throw "Pester executed 0 tests for Describe '$describeName'."
+          }
+          Write-Host "Verified $($result.TotalCount) Pester tests in '$describeName'."
+          if ($result.FailedCount -gt 0) {
+            throw "$($result.FailedCount) Pester test(s) failed."
           }
 
   pester-full-diagnostic:
