@@ -477,11 +477,7 @@
     .title-group-header.has-toggle .title-group-head {
       padding-right: 42px;
     }
-    .title-group-toggle {
-      position: absolute;
-      right: 8px;
-      bottom: 8px;
-      z-index: 2;
+    .title-toggle-button {
       width: 26px;
       height: 26px;
       border: 1px solid rgba(143,77,31,.34);
@@ -493,23 +489,42 @@
       font-size: 18px;
       line-height: 1;
       cursor: pointer;
-      transition: transform .15s ease, background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
+      transition: transform .15s ease, background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease, opacity .15s ease;
     }
-    .title-group-toggle:hover {
+    .title-toggle-button:hover:not(:disabled) {
       border-color: rgba(143,77,31,.62);
       background: var(--accent-soft);
       color: #6f3813;
       box-shadow: 0 2px 6px rgba(60,44,27,.16);
     }
-    .title-group-toggle:focus-visible {
+    .title-toggle-button:focus-visible {
       border-color: var(--accent);
       background: var(--accent-soft);
       color: #6f3813;
       outline: 2px solid rgba(143,77,31,.28);
       outline-offset: 2px;
     }
-    .title-group.collapsed .title-group-toggle {
+    .title-toggle-button:disabled {
+      opacity: .42;
+      cursor: default;
+      box-shadow: none;
+      transform: none;
+    }
+    .title-group-toggle {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      z-index: 2;
+    }
+    .title-groups-toggle-all {
+      flex: 0 0 auto;
+    }
+    .title-group.collapsed .title-group-toggle,
+    .title-groups-toggle-all.is-collapsed {
       transform: rotate(-90deg);
+    }
+    .title-groups-toggle-all:disabled {
+      transform: none;
     }
     .title-group-head:hover {
       border-color: var(--accent);
@@ -1617,6 +1632,7 @@
             <button type="button" id="collapseTitlesButton" class="pane-collapse-btn" data-collapse-pane="titles" title="收起标题">收起</button>
           </div>
           <div class="header-actions">
+          <button type="button" id="toggleAllTitleGroupsButton" class="title-toggle-button title-groups-toggle-all" title="当前没有可收起的母标题" aria-label="当前没有可收起的母标题" aria-expanded="false" disabled>⌄</button>
           <details class="sort-menu">
             <summary>排序</summary>
             <div class="sort-panel">
@@ -1806,6 +1822,7 @@
     const workspaceSortDirection = document.getElementById('workspaceSortDirection');
     const sessionSortField = document.getElementById('sessionSortField');
     const sessionSortDirection = document.getElementById('sessionSortDirection');
+    const toggleAllTitleGroupsButton = document.getElementById('toggleAllTitleGroupsButton');
     const workspaceList = document.getElementById('workspaceList');
     const sessionList = document.getElementById('sessionList');
     const viewerHead = document.getElementById('viewerHead');
@@ -3152,6 +3169,67 @@
       } catch (_) {}
     }
 
+    function getVisibleMultiTitleGroupNodes() {
+      if (!sessionList) return [];
+      return Array.from(sessionList.querySelectorAll('.title-group[data-collapse-key]'));
+    }
+
+    function syncTitleGroupsToggleAllButton() {
+      if (!toggleAllTitleGroupsButton) return;
+      const groups = getVisibleMultiTitleGroupNodes();
+      if (!groups.length) {
+        toggleAllTitleGroupsButton.disabled = true;
+        toggleAllTitleGroupsButton.classList.remove('is-collapsed');
+        toggleAllTitleGroupsButton.setAttribute('aria-expanded', 'false');
+        toggleAllTitleGroupsButton.setAttribute('aria-label', '当前没有可收起的母标题');
+        toggleAllTitleGroupsButton.title = '当前没有可收起的母标题';
+        return;
+      }
+
+      const allCollapsed = groups.every(groupNode => groupNode.classList.contains('collapsed'));
+      toggleAllTitleGroupsButton.disabled = false;
+      toggleAllTitleGroupsButton.classList.toggle('is-collapsed', allCollapsed);
+      toggleAllTitleGroupsButton.setAttribute('aria-expanded', allCollapsed ? 'false' : 'true');
+      const label = allCollapsed ? '展开全部母标题' : '收起全部母标题';
+      toggleAllTitleGroupsButton.setAttribute('aria-label', label);
+      toggleAllTitleGroupsButton.title = label;
+    }
+
+    function toggleAllVisibleTitleGroups() {
+      const groups = getVisibleMultiTitleGroupNodes();
+      if (!groups.length) {
+        syncTitleGroupsToggleAllButton();
+        return;
+      }
+
+      const allCollapsed = groups.every(groupNode => groupNode.classList.contains('collapsed'));
+      const targetCollapsed = !allCollapsed;
+      const state = readTitleGroupCollapseState();
+
+      groups.forEach(groupNode => {
+        const key = String(groupNode.dataset.collapseKey || '');
+        groupNode.classList.toggle('collapsed', targetCollapsed);
+        const expanded = !targetCollapsed;
+        const groupToggle = groupNode.querySelector('.title-group-toggle');
+        const groupHead = groupNode.querySelector('.title-group-head');
+        if (groupToggle) {
+          groupToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          groupToggle.title = expanded ? '收起同标题会话' : '展开同标题会话';
+        }
+        if (groupHead) groupHead.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        if (key) {
+          if (targetCollapsed) state[key] = true;
+          else delete state[key];
+        }
+      });
+
+      try {
+        localStorage.setItem(TITLE_GROUP_COLLAPSE_STORAGE_KEY, JSON.stringify(state));
+      } catch (_) {}
+      syncTitleGroupsToggleAllButton();
+      if (typeof schedulePinnedNotesRefresh === 'function') schedulePinnedNotesRefresh();
+    }
+
     function toggleTitleGroup(groupNode, groupToggle, workspace, group) {
       if (!groupNode || !hasMultipleSessionBranches(group)) return;
       const nextCollapsed = !groupNode.classList.contains('collapsed');
@@ -3164,6 +3242,7 @@
       const groupHead = groupNode.querySelector('.title-group-head');
       if (groupHead) groupHead.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       setTitleGroupCollapsed(workspace, group, nextCollapsed);
+      syncTitleGroupsToggleAllButton();
       if (typeof schedulePinnedNotesRefresh === 'function') schedulePinnedNotesRefresh();
     }
 
@@ -4619,6 +4698,7 @@
       const visible = getVisibleWorkspaces();
       sessionList.innerHTML = '';
       clearPinnedNotes();
+      syncTitleGroupsToggleAllButton();
 
       if (!selectedWorkspaceId) {
         sessionList.innerHTML = '<div class="empty-state">' + escapeHtml(getGlobalSearchEmptyText() || '先选择一个工作目录。') + '</div>';
@@ -4664,10 +4744,11 @@
           groupHeader.classList.add('has-toggle');
           const collapsed = isTitleGroupCollapsed(current.workspace, group);
           groupNode.classList.toggle('collapsed', collapsed);
+          groupNode.dataset.collapseKey = getTitleGroupCollapseKey(current.workspace, group);
           groupHead.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
           const groupToggle = document.createElement('button');
           groupToggle.type = 'button';
-          groupToggle.className = 'title-group-toggle';
+          groupToggle.className = 'title-toggle-button title-group-toggle';
           groupToggle.textContent = '⌄';
           groupToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
           groupToggle.title = collapsed ? '展开同标题会话' : '收起同标题会话';
@@ -4707,6 +4788,7 @@
         groupNode.insertBefore(groupHeader, groupNode.firstChild);
         sessionList.appendChild(groupNode);
       });
+      syncTitleGroupsToggleAllButton();
       schedulePinnedNotesRefresh();
 
       if (skipViewerSync) {
@@ -6552,6 +6634,9 @@
     });
     if (globalSidebarToggleButton) {
       globalSidebarToggleButton.addEventListener('click', toggleAllSidebars);
+    }
+    if (toggleAllTitleGroupsButton) {
+      toggleAllTitleGroupsButton.addEventListener('click', toggleAllVisibleTitleGroups);
     }
     if (noteDisplayToggleButton) {
       noteDisplayToggleButton.addEventListener('click', () => {
