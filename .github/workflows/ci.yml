@@ -55,17 +55,40 @@ jobs:
         shell: pwsh
         run: |
           Import-Module Pester -RequiredVersion 4.10.1 -Force
-          $tests = @(
-            'renders the streamlined V0.34 Yuji brand without renaming internal files',
-            'uses V0.34 builder and visible version markers',
-            'uses a single V0.34 HTML template source without PowerShell interpolation leftovers',
-            'stores the V0.34 version marker in a dedicated source file',
-            'adds the V0.34 bulk title-group toggle immediately before the title sort menu',
-            'scopes V0.34 bulk collapse to currently rendered multi-branch groups and persists them in one batch',
-            'derives the V0.34 top arrow state from the current rendered groups and disables it when none exist',
-            'ignores Python cache artifacts without hiding Python source files'
+
+          if (-not (Test-Path -LiteralPath .\VERSION_V0.34.txt -PathType Leaf)) {
+            throw 'VERSION_V0.34.txt is missing.'
+          }
+          if ((Get-Content -LiteralPath .\VERSION_V0.34.txt -Raw).Trim() -ne 'V0.34') {
+            throw 'VERSION_V0.34.txt does not contain V0.34.'
+          }
+
+          $patterns = @(
+            '*streamlined V0.34 Yuji brand*',
+            '*V0.34 builder and visible version markers*',
+            '*single V0.34 HTML template source*',
+            '*V0.34 bulk title-group toggle*',
+            '*V0.34 bulk collapse*',
+            '*V0.34 top arrow state*',
+            '*Python cache artifacts*'
           )
-          Invoke-Pester -Script .\tests\Build-CodexChatIndex.Tests.ps1 -TestName $tests -EnableExit
+
+          $total = 0
+          $failed = 0
+          foreach ($pattern in $patterns) {
+            Write-Host "Running Pester pattern: $pattern"
+            $result = Invoke-Pester -Script .\tests\Build-CodexChatIndex.Tests.ps1 -TestName $pattern -PassThru
+            if ($result.TotalCount -ne 1) {
+              throw "Expected exactly 1 test for pattern '$pattern', but Pester executed $($result.TotalCount)."
+            }
+            $total += $result.TotalCount
+            $failed += $result.FailedCount
+          }
+
+          Write-Host "Verified $total current-version Pester tests."
+          if ($failed -gt 0) {
+            throw "$failed current-version Pester test(s) failed."
+          }
 
   pester-full-diagnostic:
     name: Full Pester diagnostic
