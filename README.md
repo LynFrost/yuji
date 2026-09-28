@@ -29,6 +29,7 @@
 - 支持导出当前会话为 Markdown。
 - 支持输入图片记录的缩略图和预览；V0.32 会把成功识别的 PNG/JPEG/GIF/WebP/AVIF 首次快照保存到 `运行数据/CodexChatIndex.images/`，后续即使原图片移动、删除或同路径被替换，历史会话仍按首次托管内容显示。
 - V0.33 中，同标题下存在多个子会话时，点击母标题主体或右下角带边框箭头都会收起/展开，不再自动打开第一条子会话；单会话标题仍直接打开，折叠状态仅保存在当前浏览器 `localStorage`。
+- V0.34 在第二层标题区“排序”左侧新增批量箭头，可一键收起或展开当前实际显示的所有多分支母标题；筛选隐藏、其他工作目录和其他来源的标题状态不会被改动。
 - 支持增量刷新、当前会话快刷和全量重建。
 - 可选支持 WebDAV 多端同步，默认适配坚果云；每台设备只写自己的云端目录。
 - 本机 Codex、Claude 只上传，其他设备的云端来源只下载并保持只读。
@@ -133,7 +134,7 @@ WebDAV 使用 HTTPS 传输，但 V0.32 没有端到端加密。聊天正文、�
 ├── Build-CodexChatIndex.ps1        # 解析 Codex / Claude 记录并生成索引
 ├── CodexChatIndexServer.py         # 本地 HTTP 服务和刷新 API
 ├── Open-CodexChatIndex.cmd         # 一键启动本地服务并打开浏览器
-├── VERSION_V0.33.txt               # 当前版本标记
+├── VERSION_V0.34.txt               # 当前版本标记
 ├── templates/
 │   └── CodexChatIndex.template.html
 ├── webdav_sync/
@@ -178,7 +179,7 @@ Install-Module Pester -Scope CurrentUser
 - 单张托管图片上限为 30 MiB；仅支持实际内容为 PNG、JPEG、GIF、WebP、AVIF 的图片，SVG 不进入托管图片库。
 - 搜索历史只保存在浏览器的 `localStorage` 键 `yuji-search-history-v1`；可在搜索历史浮层中单条删除或清空。
 - V0.33 的备注显示模式只保存在浏览器的 `localStorage` 键 `Yuji.noteDisplayMode.v1`，不会写入备注数据，也不会上传 WebDAV。
-- 当前仓库的 `.gitignore` 已忽略 `temp/`。
+- 当前仓库的 `.gitignore` 已忽略 `temp/`、各层级 `__pycache__/` 和 `*.pyc` Python 缓存。
 - 开源前建议再次运行敏感信息扫描，确认已跟踪文件里没有私人内容。
 
 ## Roadmap
