@@ -1,0 +1,90 @@
+name: Yuji CI
+
+on:
+  push:
+    branches:
+      - master
+      - "feature/**"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    name: Python unittest
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Python unit tests
+        shell: pwsh
+        run: |
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+  pester-current:
+    name: Pester current-version regressions
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester 4.10.1
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Import-Module Pester -RequiredVersion 4.10.1 -Force
+          Get-Module Pester | Format-List Name,Version,Path
+
+      - name: Run V0.34 Pester regressions
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 4.10.1 -Force
+          $tests = @(
+            'renders the streamlined V0.34 Yuji brand without renaming internal files',
+            'uses V0.34 builder and visible version markers',
+            'uses a single V0.34 HTML template source without PowerShell interpolation leftovers',
+            'stores the V0.34 version marker in a dedicated source file',
+            'adds the V0.34 bulk title-group toggle immediately before the title sort menu',
+            'scopes V0.34 bulk collapse to currently rendered multi-branch groups and persists them in one batch',
+            'derives the V0.34 top arrow state from the current rendered groups and disables it when none exist',
+            'ignores Python cache artifacts without hiding Python source files'
+          )
+          Invoke-Pester -Script .\tests\Build-CodexChatIndex.Tests.ps1 -TestName $tests -EnableExit
+
+  pester-full-diagnostic:
+    name: Full Pester diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester 4.10.1
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run full Pester suite
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion 4.10.1 -Force
+          Invoke-Pester -Script .\tests\Build-CodexChatIndex.Tests.ps1 -EnableExit
